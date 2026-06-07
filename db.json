@@ -8,9 +8,6 @@
       ],
       "Y": [
         {
-          "code": "DropMail.me:"
-        },
-        {
           "code": "104213kt@spymail.one"
         },
         {
@@ -77,6 +74,18 @@
         }
       ],
       "purchased_at": "2026-06-07T17:20:57.862Z"
+    },
+    {
+      "user_id": 7433145236,
+      "account_type": "Y",
+      "quantity": 1,
+      "total_price": 0.01,
+      "accounts": [
+        {
+          "code": "DropMail.me:"
+        }
+      ],
+      "purchased_at": "2026-06-07T17:25:51.904Z"
     }
   ]
 }

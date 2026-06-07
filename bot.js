@@ -472,6 +472,9 @@ function startWebhookServer() {
   });
 }
 
+// ── Delivery idempotency lock (prevents double-delivery from webhook + watchdog) ─
+const _delivering = new Set();
+
 // ── Global payment watchdog (replaces per-session setInterval) ─────────────────
 let _watchdogTimer = null;
 
@@ -530,71 +533,88 @@ async function runPaymentWatchdog() {
 }
 
 async function deliverAccounts(ctx, chatId, userId, session, paymentData = null) {
-  const { account_type, quantity } = session;
-  let reserved = session.reserved_accounts ?? [];
-
-  // Delete QR photo
-  for (const k of ["photo_message_id", "qr_message_id"]) {
-    if (session[k]) deleteMsg(ctx, chatId, session[k]).catch(() => {});
-  }
-
-  let delivered = null;
-  if (reserved.length >= quantity) {
-    delivered = reserved.slice(0, quantity);
-  } else if ((accounts_data.account_types[account_type] ?? []).length >= quantity) {
-    const pool = accounts_data.account_types[account_type];
-    delivered  = pool.slice(0, quantity);
-    accounts_data.account_types[account_type] = pool.slice(quantity);
-    saveAccounts();
-  }
-
-  delete user_sessions[userId]; saveSessions();
-
-  if (!delivered) {
-    await sendMsg(ctx, chatId, `❌ <b>មានបញ្ហា!</b>\n\nគ្មាន គូប៉ុង ប្រភេទ ${esc(account_type)} ក្នុងស្តុក។`);
+  // Idempotency lock — prevent double delivery from webhook + watchdog race
+  const lockKey = session.transaction_id || String(userId);
+  if (_delivering.has(lockKey)) {
+    console.warn(`[Deliver] Skipping duplicate delivery for ${lockKey}`);
     return;
   }
+  _delivering.add(lockKey);
 
-  // Save purchase history
-  purchases.push({
-    user_id: userId, account_type, quantity,
-    total_price: session.total_price, accounts: delivered,
-    purchased_at: new Date().toISOString(),
-  });
-  savePurchases();
-
-  // Build delivery message — one message per coupon
-  for (let i = 0; i < delivered.length; i++) {
-    const acc = delivered[i];
-    const msg = `📩 <b>លេខកូដផ្ទៀងផ្ទាត់ E-GetS</b>\n\n<code>${esc(formatAccount(acc))}</code>\n\n<code>${userId}</code>`;
-    const isLast = i === delivered.length - 1;
-    await sendMsg(ctx, chatId, msg, isLast ? mainKb(userId) : undefined);
-  }
-
-  // Admin notification
   try {
-    const pd  = paymentData || {};
-    const now = nowKH();
-    const fromAcc = pd.fromAccountId || pd.hash || "N/A";
-    const memo    = pd.memo || "គ្មាន";
-    const ref     = pd.externalRef || pd.transactionId || pd.md5 || "N/A";
-    const adminMsg = (
-      "🎉 <b>ទទួលបានការបង់ប្រាក់ជោគជ័យ</b>\n" +
-      "━━━━━━━━━━━━━━━━━━━\n" +
-      `🆔 <b>ឈ្មោះអ្នកទិញ(ID):</b> ${userId}\n` +
-      `💵 <b>ទឹកប្រាក់:</b> ${session.total_price} USD\n` +
-      `👤 <b>ពីធនាគារ:</b> <code>${esc(fromAcc)}</code>\n` +
-      `📝 <b>ចំណាំ:</b> ${esc(memo)}\n` +
-      `🧾 <b>លេខយោង:</b> <code>${esc(ref)}</code>\n` +
-      `⏰ <b>ម៉ោង:</b> ${now}`
-    );
-    await sendMsg(ctx, ADMIN_ID, adminMsg);
-    if (CHANNEL_ID && String(CHANNEL_ID) !== String(ADMIN_ID)) {
-      await sendMsg(ctx, CHANNEL_ID, adminMsg).catch(() => {});
-    }
-  } catch (e) { console.warn("[WARN] admin payment notify:", e.message); }
+    const { account_type, quantity } = session;
+    const reserved = session.reserved_accounts ?? [];
 
-  console.log(`[INFO] Payment confirmed and ${quantity} accounts delivered to user ${userId}`);
+    // Delete QR photo
+    for (const k of ["photo_message_id", "qr_message_id"]) {
+      if (session[k]) deleteMsg(ctx, chatId, session[k]).catch(() => {});
+    }
+
+    // Determine coupons to deliver
+    let delivered = null;
+    if (reserved.length >= quantity) {
+      // Already removed from pool at reservation time — just use them
+      delivered = reserved.slice(0, quantity);
+      saveAccounts();
+    } else if ((accounts_data.account_types[account_type] ?? []).length >= quantity) {
+      const pool = accounts_data.account_types[account_type];
+      delivered  = pool.slice(0, quantity);
+      accounts_data.account_types[account_type] = pool.slice(quantity);
+      saveAccounts();
+    }
+
+    delete user_sessions[userId]; saveSessions();
+
+    if (!delivered) {
+      await sendMsg(ctx, chatId, `❌ <b>មានបញ្ហា!</b>\n\nគ្មាន គូប៉ុង ប្រភេទ ${esc(account_type)} ក្នុងស្តុក។`);
+      return;
+    }
+
+    // Save purchase history
+    purchases.push({
+      user_id: userId, account_type, quantity,
+      total_price: session.total_price, accounts: delivered,
+      purchased_at: new Date().toISOString(),
+    });
+    savePurchases();
+
+    // Send one message per coupon with clear format
+    for (let i = 0; i < delivered.length; i++) {
+      const acc    = delivered[i];
+      const isLast = i === delivered.length - 1;
+      const msg    =
+        `✅ <b>គូប៉ុង ${esc(account_type)} (${i + 1}/${quantity})</b>\n\n` +
+        `<code>${esc(formatAccount(acc))}</code>`;
+      await sendMsg(ctx, chatId, msg, isLast ? mainKb(userId) : undefined);
+    }
+
+    // Admin / channel notification
+    try {
+      const pd  = paymentData || {};
+      const now = nowKH();
+      const fromAcc = pd.fromAccountId || pd.hash || "N/A";
+      const memo    = pd.memo || "គ្មាន";
+      const ref     = pd.externalRef || pd.transactionId || pd.md5 || "N/A";
+      const adminMsg =
+        "🎉 <b>ទទួលបានការបង់ប្រាក់ជោគជ័យ</b>\n" +
+        "━━━━━━━━━━━━━━━━━━━\n" +
+        `🆔 <b>អ្នកទិញ(ID):</b> ${userId}\n` +
+        `📦 <b>ប្រភេទ:</b> ${esc(account_type)} × ${quantity}\n` +
+        `💵 <b>ទឹកប្រាក់:</b> $${session.total_price}\n` +
+        `👤 <b>ពីធនាគារ:</b> <code>${esc(fromAcc)}</code>\n` +
+        `📝 <b>ចំណាំ:</b> ${esc(memo)}\n` +
+        `🧾 <b>លេខយោង:</b> <code>${esc(ref)}</code>\n` +
+        `⏰ <b>ម៉ោង:</b> ${now}`;
+      await sendMsg(ctx, ADMIN_ID, adminMsg);
+      if (CHANNEL_ID && String(CHANNEL_ID) !== String(ADMIN_ID)) {
+        await sendMsg(ctx, CHANNEL_ID, adminMsg).catch(() => {});
+      }
+    } catch (e) { console.warn("[WARN] admin payment notify:", e.message); }
+
+    console.log(`[INFO] Delivered ${quantity}× ${account_type} to user ${userId}`);
+  } finally {
+    _delivering.delete(lockKey);
+  }
 }
 
 // ── 17. Bot setup ─────────────────────────────────────────────────────────────
