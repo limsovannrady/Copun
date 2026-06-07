@@ -1,25 +1,7 @@
 {
   "accounts": {
-    "accounts": [
-      {
-        "code": "Iajsis,sisi.i"
-      },
-      {
-        "code": "Sjs8ssj.@isj.sk"
-      }
-    ],
-    "account_types": {
-      "1": [],
-      "គូប៉ុង 0.50$": [
-        {
-          "code": "Sjs8ssj.@isj.sk"
-        }
-      ]
-    },
-    "prices": {
-      "1": 0.01,
-      "គូប៉ុង 0.50$": 0.01
-    }
+    "account_types": {},
+    "prices": {}
   },
   "sessions": {},
   "settings": {

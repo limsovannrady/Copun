@@ -40,7 +40,7 @@ async function getLogoBuffer() {
 }
 
 // ── 3. In-memory state ────────────────────────────────────────────────────────
-let accounts_data  = { accounts: [], account_types: {}, prices: {} };
+let accounts_data  = { account_types: {}, prices: {} };
 let user_sessions  = {};
 let settings       = {};
 let known_users    = {};
@@ -890,7 +890,6 @@ bot.on("text", async ctx => {
         const count = (accounts_data.account_types[typeName] ?? []).length;
         delete accounts_data.account_types[typeName];
         delete accounts_data.prices[typeName];
-        accounts_data.accounts = (accounts_data.accounts || []).filter(a => a.type !== typeName);
         saveAccounts();
         return sendMsg(ctx, chatId, `✅ <b>បានលុបប្រភេទ <code>${esc(typeName)}</code> ចំនួន ${count} records!</b>`, ADMIN_SETTINGS_KB);
       }
@@ -975,7 +974,6 @@ bot.on("text", async ctx => {
       if (!accounts_data.account_types[accountType]) accounts_data.account_types[accountType] = [];
       accounts_data.account_types[accountType].push(...toAdd);
       accounts_data.prices[accountType] = Math.round(price * 10000) / 10000;
-      accounts_data.accounts = [...(accounts_data.accounts || []), ...toAdd];
       saveAccounts();
       delete user_sessions[uid]; saveSessions();
 
@@ -1374,7 +1372,8 @@ async function recoverPendingSessions() {
 function loadAll() {
   const db       = readDB();
   settings       = db.settings   ?? {};
-  accounts_data  = db.accounts   ?? { accounts: [], account_types: {}, prices: {} };
+  const raw      = db.accounts   ?? {};
+  accounts_data  = { account_types: raw.account_types ?? {}, prices: raw.prices ?? {} };
   known_users    = db.users      ?? {};
   purchases      = db.purchases  ?? [];
   const stored   = db.sessions   ?? {};
