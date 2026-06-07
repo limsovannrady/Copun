@@ -82,6 +82,7 @@ const BTN_BROADCAST_CONFIRM = "✅ បញ្ជាក់ផ្សាយ";
 const BTN_BROADCAST_CANCEL  = "🚫 បោះបង់ការផ្សាយ";
 const BTN_EMAIL_MGMT        = "📧 អ៊ីម៉ែល";
 const BTN_EMAIL_NEW         = "📨 Email ថ្មី";
+const BTN_EMAIL_LIST        = "📋 បញ្ជី Email";
 const BTN_EMAIL_SET_TOKEN   = "🔑 កំណត់ Token";
 const BTN_EMAIL_CLEAR       = "🗑 លុប Email";
 const ADMIN_SETTINGS_BTN    = "⚙️កំណត់";
@@ -93,7 +94,7 @@ const ADMIN_BUTTON_LABELS = new Set([
   BTN_CHANNEL_EDIT, BTN_CHANNEL_CLEAR, BTN_ADMIN_ADD, BTN_ADMIN_REMOVE,
   BTN_MAINT_ON, BTN_MAINT_OFF, BTN_CANCEL_INPUT,
   BTN_DELETE_CONFIRM, BTN_DELETE_CANCEL, BTN_BROADCAST_CONFIRM, BTN_BROADCAST_CANCEL,
-  BTN_EMAIL_MGMT, BTN_EMAIL_NEW, BTN_EMAIL_SET_TOKEN, BTN_EMAIL_CLEAR,
+  BTN_EMAIL_MGMT, BTN_EMAIL_NEW, BTN_EMAIL_LIST, BTN_EMAIL_SET_TOKEN, BTN_EMAIL_CLEAR,
   ADMIN_SETTINGS_BTN,
 ]);
 
@@ -136,7 +137,7 @@ const BROADCAST_CONFIRM_KB = Markup.keyboard([
 ]).resize().persistent();
 
 const EMAIL_SUBMENU_KB = Markup.keyboard([
-  [BTN_EMAIL_NEW],
+  [BTN_EMAIL_NEW, BTN_EMAIL_LIST],
   [BTN_EMAIL_SET_TOKEN, BTN_EMAIL_CLEAR],
   [BTN_BACK_SETTINGS],
 ]).resize().persistent();
@@ -1148,6 +1149,25 @@ async function dispatchAdminButton(ctx, chatId, uid, btn) {
       } catch (e) {
         return sendMsg(ctx, chatId, `❌ Error: <code>${esc(e.message)}</code>`, EMAIL_SUBMENU_KB);
       }
+    }
+
+    case BTN_EMAIL_LIST: {
+      const allSessions = getAllDropmailSessions();
+      const entries = Object.entries(allSessions);
+      if (!entries.length) {
+        return sendMsg(ctx, chatId, "📭 <b>មិនទាន់មាន Email session ណាមួយទេ។</b>\n\nចុច 📨 Email ថ្មី ដើម្បីបង្កើត។", EMAIL_SUBMENU_KB);
+      }
+      const now = Date.now();
+      const lines = entries.map(([sessUid, s], i) => {
+        const exp = s.expiresAt ? new Date(s.expiresAt).toISOString().slice(0, 16).replace("T", " ") : "—";
+        const expired = s.expiresAt && new Date(s.expiresAt).getTime() < now;
+        const status = expired ? "❌ ផុតកំណត់" : "✅ សកម្ម";
+        const mine = String(sessUid) === String(uid) ? " <b>(អ្នក)</b>" : "";
+        return `${i + 1}. 📧 <code>${esc(s.address)}</code>${mine}\n    ${status} | ⏱ ${esc(exp)} UTC`;
+      });
+      return sendMsg(ctx, chatId,
+        `📋 <b>បញ្ជី Email Sessions (${entries.length})</b>\n\n` + lines.join("\n\n"),
+        EMAIL_SUBMENU_KB);
     }
 
     case BTN_EMAIL_CLEAR:

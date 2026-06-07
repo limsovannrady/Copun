@@ -33,7 +33,7 @@
       "account_type": "I",
       "price": 0.01,
       "available_count": 2,
-      "started_at": 1780830865115,
+      "started_at": 1780830980843,
       "quantity": 1,
       "total_price": 0.01,
       "reserved_accounts": [
@@ -41,10 +41,10 @@
           "code": "Iehs8eehw"
         }
       ],
-      "transaction_id": "bk_A40EBEB50A3A6AEF",
-      "qr_sent_at": 1780830867727,
-      "photo_message_id": 641,
-      "qr_message_id": 641
+      "transaction_id": "bk_08DF30AAF74BDB0E",
+      "qr_sent_at": 1780830983969,
+      "photo_message_id": 650,
+      "qr_message_id": 650
     }
   },
   "settings": {
