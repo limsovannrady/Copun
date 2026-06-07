@@ -4,6 +4,7 @@ import crypto from "crypto";
 import http from "http";
 import { fileURLToPath } from "url";
 import QRCode from "qrcode";
+import sharp from "sharp";
 import { Telegraf, Markup } from "telegraf";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -161,6 +162,44 @@ async function khpayRequest(method, path, body = null) {
   try { return JSON.parse(text); } catch { return { success: false, error: text }; }
 }
 
+// Cache Bakong logo buffer in memory
+let _bakongLogoBuffer = null;
+async function getBakongLogo() {
+  if (_bakongLogoBuffer) return _bakongLogoBuffer;
+  try {
+    const res = await fetch("https://bakong.nbc.gov.kh/images/logo.png", { signal: AbortSignal.timeout(8000) });
+    if (res.ok) _bakongLogoBuffer = Buffer.from(await res.arrayBuffer());
+  } catch {}
+  return _bakongLogoBuffer;
+}
+
+async function generateBakongQR(qr_string) {
+  const QR_SIZE = 500;
+  const qrBuffer = await QRCode.toBuffer(qr_string, {
+    errorCorrectionLevel: "H",
+    width: QR_SIZE,
+    margin: 2,
+    color: { dark: "#000000", light: "#ffffff" },
+  });
+
+  const logo = await getBakongLogo();
+  if (!logo) return qrBuffer;
+
+  const logoSize  = Math.round(QR_SIZE * 0.22);
+  const pad       = Math.round(logoSize * 0.15 / 2);
+  const logoLayer = await sharp(logo)
+    .resize(logoSize, logoSize, { fit: "contain", background: { r: 255, g: 255, b: 255, alpha: 1 } })
+    .extend({ top: pad, bottom: pad, left: pad, right: pad,
+               background: { r: 255, g: 255, b: 255, alpha: 1 } })
+    .png()
+    .toBuffer();
+
+  return sharp(qrBuffer)
+    .composite([{ input: logoLayer, gravity: "centre" }])
+    .png()
+    .toBuffer();
+}
+
 async function createKhpayPayment(amount, note = "") {
   try {
     const data = await khpayRequest("POST", "/bakong/generate", {
@@ -171,21 +210,8 @@ async function createKhpayPayment(amount, note = "") {
     if (!data.success) {
       return { imgBuffer: null, transaction_id: null, error: data.error || "API error" };
     }
-    const { transaction_id, qr: qr_string, expires_in, md5, download_qr } = data.data;
-
-    // Fetch official Bakong KHQR image from KhPay; fallback to local render
-    let imgBuffer;
-    if (download_qr) {
-      try {
-        const imgRes = await fetch(download_qr, { signal: AbortSignal.timeout(10000) });
-        if (imgRes.ok) {
-          imgBuffer = Buffer.from(await imgRes.arrayBuffer());
-        }
-      } catch {}
-    }
-    if (!imgBuffer) {
-      imgBuffer = await QRCode.toBuffer(qr_string, { errorCorrectionLevel: "M", width: 400, margin: 2 });
-    }
+    const { transaction_id, qr: qr_string, expires_in, md5 } = data.data;
+    const imgBuffer = await generateBakongQR(qr_string);
     return { imgBuffer, transaction_id, md5: md5 ?? null, expires_in: expires_in ?? 180, error: null };
   } catch (e) {
     return { imgBuffer: null, transaction_id: null, error: e.message };
