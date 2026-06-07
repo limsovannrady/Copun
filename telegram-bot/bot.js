@@ -16,12 +16,9 @@ let   EXTRA_ADMIN_IDS        = new Set();
 let   CHANNEL_ID             = "";
 let   PAYMENT_NAME           = "RADY";
 let   MAINTENANCE_MODE       = false;
-let   BAKONG_TOKEN           = "";
-let   BAKONG_API_TOKEN       = "";
-let   BAKONG_RELAY_TOKEN     = "";
-let   DROPMAIL_API_TOKEN     = "";
-let   DROPMAIL_TOKEN_EXPIRY  = "";
-const PAYMENT_TIMEOUT_SEC    = 60;
+let   KHPAY_API_KEY          = "ak_5de3149200e549b740b513233fa2a90930f8d2efadabcd92";
+const KHPAY_BASE             = "https://www.khpay.site/api/v1";
+const PAYMENT_TIMEOUT_SEC    = 175;
 const PAYMENT_POLL_INTERVAL  = 5;
 
 // ── 2. Data directory ─────────────────────────────────────────────────────────
@@ -67,15 +64,15 @@ const BTN_STOCK             = "📦 ស្តុក គូប៉ុង";
 const BTN_USERS             = "👥 អ្នកប្រើប្រាស់";
 const BTN_BUYERS            = "📋 របាយការណ៍ទិញ";
 const BTN_PAYMENT           = "💳 ឈ្មោះ Payment";
-const BTN_BAKONG            = "🔑 Bakong Token";
+const BTN_KHPAY             = "💰 KhPay API";
 const BTN_CHANNEL           = "📢 Channel ID";
 const BTN_ADMINS            = "👑 គ្រប់គ្រង Admin";
 const BTN_MAINTENANCE       = "🛠 Maintenance Mode";
 const BTN_BROADCAST         = "📢 ផ្សាយព័ត៌មាន";
 const BTN_BACK_SETTINGS     = "⬅️ ត្រឡប់ទៅកំណត់";
 const BTN_PAYMENT_EDIT      = "✏️ ប្តូរឈ្មោះ Payment";
-const BTN_BAKONG_API_EDIT   = "✏️ ប្តូរ Bakong Token";
-const BTN_BAKONG_TOKEN_INFO = "📅 ព័ត៌មាន Token";
+const BTN_KHPAY_KEY_EDIT    = "✏️ ប្តូរ KhPay API Key";
+const BTN_KHPAY_INFO        = "📊 ព័ត៌មាន KhPay";
 const BTN_CHANNEL_EDIT      = "✏️ ប្តូរ Channel ID";
 const BTN_CHANNEL_CLEAR     = "🗑 លុប Channel ID";
 const BTN_ADMIN_ADD         = "➕ បន្ថែម Admin";
@@ -93,8 +90,8 @@ const ADMIN_SETTINGS_BTN    = "⚙️កំណត់";
 
 const ADMIN_BUTTON_LABELS = new Set([
   BTN_ADD_ACCOUNT, BTN_DELETE_TYPE, BTN_STOCK, BTN_USERS, BTN_BUYERS,
-  BTN_PAYMENT, BTN_BAKONG, BTN_CHANNEL, BTN_ADMINS, BTN_MAINTENANCE, BTN_BROADCAST,
-  BTN_BACK_SETTINGS, BTN_PAYMENT_EDIT, BTN_BAKONG_API_EDIT, BTN_BAKONG_TOKEN_INFO,
+  BTN_PAYMENT, BTN_KHPAY, BTN_CHANNEL, BTN_ADMINS, BTN_MAINTENANCE, BTN_BROADCAST,
+  BTN_BACK_SETTINGS, BTN_PAYMENT_EDIT, BTN_KHPAY_KEY_EDIT, BTN_KHPAY_INFO,
   BTN_CHANNEL_EDIT, BTN_CHANNEL_CLEAR, BTN_ADMIN_ADD, BTN_ADMIN_REMOVE,
   BTN_MAINT_ON, BTN_MAINT_OFF, BTN_CANCEL_INPUT,
   BTN_DELETE_CONFIRM, BTN_DELETE_CANCEL, BTN_BROADCAST_CONFIRM, BTN_BROADCAST_CANCEL,
@@ -110,7 +107,7 @@ const ADMIN_SETTINGS_KB = Markup.keyboard([
   [BTN_ADD_ACCOUNT,   BTN_DELETE_TYPE],
   [BTN_STOCK,         BTN_BUYERS],
   [BTN_USERS,         BTN_EMAIL_MGMT],
-  [BTN_PAYMENT,       BTN_BAKONG],
+  [BTN_PAYMENT,       BTN_KHPAY],
   [BTN_CHANNEL,       BTN_ADMINS],
   [BTN_MAINTENANCE,   BTN_BROADCAST],
   [BTN_TTS_MGMT],
@@ -124,8 +121,8 @@ const PAYMENT_SUBMENU_KB = Markup.keyboard([
   [BTN_PAYMENT_EDIT], [BTN_BACK_SETTINGS],
 ]).resize().persistent();
 
-const BAKONG_SUBMENU_KB = Markup.keyboard([
-  [BTN_BAKONG_API_EDIT, BTN_BAKONG_TOKEN_INFO], [BTN_BACK_SETTINGS],
+const KHPAY_SUBMENU_KB = Markup.keyboard([
+  [BTN_KHPAY_KEY_EDIT, BTN_KHPAY_INFO], [BTN_BACK_SETTINGS],
 ]).resize().persistent();
 
 const CHANNEL_SUBMENU_KB = Markup.keyboard([
@@ -150,86 +147,48 @@ const CHECK_PAYMENT_INLINE = Markup.inlineKeyboard([
 
 const mainKb = uid => isAdmin(uid) ? ADMIN_KB : Markup.removeKeyboard();
 
-// ── 8. KHQR helpers (100% identical logic to GitHub) ─────────────────────────
-function crc16(data) {
-  let crc = 0xffff;
-  for (const ch of data) {
-    crc ^= ch.charCodeAt(0) << 8;
-    for (let i = 0; i < 8; i++)
-      crc = (crc & 0x8000) ? ((crc << 1) ^ 0x1021) & 0xffff : (crc << 1) & 0xffff;
-  }
-  return crc.toString(16).toUpperCase().padStart(4, "0");
+// ── 8. KhPay API helpers ──────────────────────────────────────────────────────
+async function khpayRequest(method, path, body = null) {
+  const opts = {
+    method,
+    headers: {
+      Authorization: `Bearer ${KHPAY_API_KEY}`,
+      "Content-Type": "application/json",
+    },
+    signal: AbortSignal.timeout(12000),
+  };
+  if (body) opts.body = JSON.stringify(body);
+  const res  = await fetch(`${KHPAY_BASE}${path}`, opts);
+  const text = await res.text();
+  try { return JSON.parse(text); } catch { return { success: false, error: text }; }
 }
 
-function tlv(tag, value) {
-  return `${tag}${String(value.length).padStart(2, "0")}${value}`;
-}
-
-function buildKHQRManual(bankAccount, merchantName, merchantCity, amount, billNumber, phone, storeLabel, terminalLabel) {
-  const phoneLocal = phone.startsWith("855") ? "0" + phone.slice(3) : phone.slice(-9);
-  const addData = tlv("03", storeLabel) + tlv("02", phoneLocal) + tlv("01", billNumber) + tlv("07", terminalLabel);
-  const nowMs  = String(Date.now());
-  const expMs  = String(Date.now() + 86400000);
-  const infoData = tlv("00", nowMs) + tlv("01", expMs);
-  const body = (
-    tlv("00", "01") + tlv("01", "12") +
-    tlv("29", tlv("00", bankAccount)) +
-    tlv("52", "5999") + tlv("53", "840") +
-    tlv("54", amount.toFixed(2)) + tlv("58", "KH") +
-    tlv("59", merchantName) + tlv("60", merchantCity) +
-    tlv("62", addData) + tlv("99", infoData) + "6304"
-  );
-  return body + crc16(body);
-}
-
-async function generatePaymentQR(amount) {
-  const bankAccount  = getSetting("BANK_ACCOUNT", "sovannrady@aclb");
-  const payName      = PAYMENT_NAME;
-  const billNumber   = `TRX${Date.now()}`;
-  const phone        = "85593330905";
-  const storeLabel   = payName;
-  const terminalLabel = "Cashier-01";
-  const city         = "KPS";
-
-  // Build KHQR string (manual, identical to GitHub _build_khqr_manual)
-  const qrString = buildKHQRManual(bankAccount, payName, city, amount, billNumber, phone, storeLabel, terminalLabel);
-  const md5 = crypto.createHash("md5").update(qrString).digest("hex");
-
+async function createKhpayPayment(amount, note = "") {
   try {
-    const imgBuffer = await QRCode.toBuffer(qrString, { errorCorrectionLevel: "M", width: 400, margin: 2 });
-    return { imgBuffer, md5, qrString, error: null };
-  } catch (e) {
-    // Fallback: try api.qrserver.com
-    try {
-      const res = await fetch(`https://api.qrserver.com/v1/create-qr-code/?size=400x400&data=${encodeURIComponent(qrString)}`, { signal: AbortSignal.timeout(10000) });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const ab = await res.arrayBuffer();
-      return { imgBuffer: Buffer.from(ab), md5, qrString, error: null };
-    } catch (e2) {
-      return { imgBuffer: null, md5: null, qrString, error: e2.message };
+    const data = await khpayRequest("POST", "/qr/generate", { amount, note: note || PAYMENT_NAME });
+    if (!data.success) {
+      return { imgBuffer: null, transaction_id: null, error: data.error || "API error" };
     }
+    const { transaction_id, qr_string, expires_in } = data.data;
+
+    // Render QR from qr_string locally (reliable, no extra fetch)
+    const imgBuffer = await QRCode.toBuffer(qr_string, { errorCorrectionLevel: "M", width: 400, margin: 2 });
+    return { imgBuffer, transaction_id, expires_in: expires_in ?? 180, error: null };
+  } catch (e) {
+    return { imgBuffer: null, transaction_id: null, error: e.message };
   }
 }
 
-async function checkPaymentStatus(md5) {
-  const tokens = [];
-  if (BAKONG_RELAY_TOKEN) tokens.push(BAKONG_RELAY_TOKEN);
-  if (BAKONG_API_TOKEN && !tokens.includes(BAKONG_API_TOKEN)) tokens.push(BAKONG_API_TOKEN);
-  if (!tokens.length && BAKONG_TOKEN) tokens.push(BAKONG_TOKEN);
-  for (const tok of tokens) {
-    try {
-      const base = tok.startsWith("rbk") ? "https://api.bakongrelay.com/v1" : "https://api-bakong.nbc.gov.kh/v1";
-      const res  = await fetch(`${base}/check_transaction_by_md5`, {
-        method: "POST",
-        headers: { Authorization: `Bearer ${tok}`, "Content-Type": "application/json" },
-        body: JSON.stringify({ md5 }),
-        signal: AbortSignal.timeout(10000),
-      });
-      const data = await res.json();
-      if (data.responseCode === 0) return { paid: true, data: data.data ?? null };
-    } catch (e) { console.warn("[WARN] check_payment:", e.message); }
+async function checkKhpayStatus(transaction_id) {
+  try {
+    const data = await khpayRequest("GET", `/transactions/${transaction_id}`);
+    if (!data.success) return { paid: false, status: "error", data: null };
+    const { status } = data.data;
+    return { paid: status === "paid", status, data: data.data };
+  } catch (e) {
+    console.warn("[WARN] checkKhpayStatus:", e.message);
+    return { paid: false, status: "error", data: null };
   }
-  return { paid: false, data: null };
 }
 
 // ── 9. Account type helpers ───────────────────────────────────────────────────
@@ -352,9 +311,9 @@ async function startPaymentForSession(ctx, chatId, userId, session, cbQuery = nu
   if (cbQuery) { try { await cbQuery.answerCbQuery("កំពុងបង្កើត QR..."); } catch {} }
   session.state = "payment_pending";
 
-  const { imgBuffer, md5, error } = await generatePaymentQR(session.total_price);
+  const { imgBuffer, transaction_id, error } = await createKhpayPayment(session.total_price, session.account_type);
 
-  if (!imgBuffer) {
+  if (!imgBuffer || !transaction_id) {
     if (isAdmin(userId)) {
       await sendMsg(ctx, chatId, `❌ <b>QR បរាជ័យ (Admin Debug):</b>\n<code>${esc(String(error))}</code>`);
     } else {
@@ -367,8 +326,8 @@ async function startPaymentForSession(ctx, chatId, userId, session, cbQuery = nu
     return false;
   }
 
-  session.md5_hash   = md5;
-  session.qr_sent_at = Date.now();
+  session.transaction_id = transaction_id;
+  session.qr_sent_at     = Date.now();
 
   const photoMsg = await sendPhoto(ctx, chatId, imgBuffer, { ...CHECK_PAYMENT_INLINE });
   if (photoMsg) {
@@ -380,17 +339,17 @@ async function startPaymentForSession(ctx, chatId, userId, session, cbQuery = nu
   saveSessions();
 
   // Start polling loop
-  scheduleQRExpiry(ctx, chatId, userId, md5, session.qr_sent_at);
-  console.log(`[INFO] Generated QR for user ${userId}: Amount $${session.total_price}, MD5: ${md5}`);
+  scheduleQRExpiry(ctx, chatId, userId, transaction_id, session.qr_sent_at);
+  console.log(`[INFO] KhPay QR sent to user ${userId}: Amount $${session.total_price}, TxnID: ${transaction_id}`);
   return true;
 }
 
-function scheduleQRExpiry(ctx, chatId, userId, md5, startedAt) {
+function scheduleQRExpiry(ctx, chatId, userId, transaction_id, startedAt) {
   const deadline = startedAt + PAYMENT_TIMEOUT_SEC * 1000;
 
   const interval = setInterval(async () => {
     const sess = user_sessions[userId];
-    if (!sess || sess.state !== "payment_pending" || sess.md5_hash !== md5) {
+    if (!sess || sess.state !== "payment_pending" || sess.transaction_id !== transaction_id) {
       clearInterval(interval); return;
     }
 
@@ -410,12 +369,12 @@ function scheduleQRExpiry(ctx, chatId, userId, md5, startedAt) {
       return;
     }
 
-    // Check payment
-    const { paid, data: payData } = await checkPaymentStatus(md5);
+    // Check payment via KhPay API
+    const { paid, data: payData } = await checkKhpayStatus(transaction_id);
     if (paid) {
       clearInterval(interval);
       const cur = user_sessions[userId];
-      if (cur && cur.md5_hash === md5) await deliverAccounts(ctx, chatId, userId, cur, payData);
+      if (cur && cur.transaction_id === transaction_id) await deliverAccounts(ctx, chatId, userId, cur, payData);
     }
   }, PAYMENT_POLL_INTERVAL * 1000);
 }
@@ -615,11 +574,11 @@ bot.on("callback_query", async ctx => {
   // ── cancel_purchase ───────────────────────────────────────────────────────
   if (data === "cancel_purchase") {
     const sess = user_sessions[uid];
-    const md5  = sess?.md5_hash;
-    // Check if actually paid first (smart cancel, identical to GitHub)
-    if (md5) {
+    const txnId = sess?.transaction_id;
+    // Check if actually paid first (smart cancel)
+    if (txnId) {
       try {
-        const { paid, data: pd } = await checkPaymentStatus(md5);
+        const { paid, data: pd } = await checkKhpayStatus(txnId);
         if (paid) {
           await ctx.answerCbQuery("✅ បានទទួលការបង់ប្រាក់!");
           await deliverAccounts(ctx, chatId, uid, sess, pd);
@@ -901,17 +860,17 @@ async function dispatchAdminButton(ctx, chatId, uid, btn) {
       user_sessions[uid] = { state: "admin_input:payment" }; saveSessions();
       return sendMsg(ctx, chatId, "💳 សូមផ្ញើ <b>ឈ្មោះ Payment</b> ថ្មី:\n\n<i>ចុច 🚫 បោះបង់ ដើម្បីបោះបង់</i>", CANCEL_INPUT_KB);
 
-    case BTN_BAKONG:
+    case BTN_KHPAY:
       return sendMsg(ctx, chatId,
-        `🔑 <b>Bakong Token បច្ចុប្បន្ន៖</b>\n\n<code>${esc(BAKONG_API_TOKEN || "(មិនទាន់កំណត់)")}</code>`,
-        BAKONG_SUBMENU_KB);
+        `💰 <b>KhPay API Key បច្ចុប្បន្ន៖</b>\n\n<code>${esc(KHPAY_API_KEY.slice(0,12))}…${esc(KHPAY_API_KEY.slice(-4))}</code>`,
+        KHPAY_SUBMENU_KB);
 
-    case BTN_BAKONG_API_EDIT:
-      user_sessions[uid] = { state: "admin_input:bakong_api" }; saveSessions();
-      return sendMsg(ctx, chatId, "🔑 សូមផ្ញើ <b>Bakong Token</b> ថ្មី:\n\n<i>ចុច 🚫 បោះបង់ ដើម្បីបោះបង់</i>", CANCEL_INPUT_KB);
+    case BTN_KHPAY_KEY_EDIT:
+      user_sessions[uid] = { state: "admin_input:khpay_key" }; saveSessions();
+      return sendMsg(ctx, chatId, "💰 សូមផ្ញើ <b>KhPay API Key</b> ថ្មី:\n\n<i>ចុច 🚫 បោះបង់ ដើម្បីបោះបង់</i>", CANCEL_INPUT_KB);
 
-    case BTN_BAKONG_TOKEN_INFO:
-      return sendTokenInfo(ctx, chatId);
+    case BTN_KHPAY_INFO:
+      return sendKhpayInfo(ctx, chatId);
 
     case BTN_CHANNEL: {
       const cur = CHANNEL_ID || "(មិនទាន់កំណត់)";
@@ -995,15 +954,14 @@ async function handleAdminInput(ctx, chatId, uid, msgId, key, text) {
     return sendMsg(ctx, chatId, `✅ បានប្តូរឈ្មោះ Payment ទៅជា <b>${esc(text)}</b>`, mainKb(uid));
   }
 
-  if (key === "bakong_api" || key === "bakong") {
-    if (!text) return sendMsg(ctx, chatId, "សូមផ្ញើ Bakong token ថ្មី (ឬចុច 🚫 បោះបង់)");
-    BAKONG_API_TOKEN = text;
-    BAKONG_TOKEN     = text;
-    setSetting("BAKONG_API_TOKEN", text);
+  if (key === "khpay_key") {
+    if (!text || !text.startsWith("ak_")) return sendMsg(ctx, chatId, "❌ KhPay API Key ត្រូវចាប់ផ្ដើមដោយ <code>ak_</code>\n\nសូមផ្ញើ Key ត្រឹមត្រូវ (ឬចុច 🚫 បោះបង់)");
+    KHPAY_API_KEY = text;
+    setSetting("KHPAY_API_KEY", text);
     delete user_sessions[uid]; saveSessions();
     deleteMsg(ctx, chatId, msgId).catch(() => {});
     return sendMsg(ctx, chatId,
-      `✅ បានប្តូរ <b>Bakong Token</b> (Prefix: <code>${esc(text.slice(0, 10))}…</code>)`,
+      `✅ បានប្តូរ <b>KhPay API Key</b>\n<code>${esc(text.slice(0, 12))}…${esc(text.slice(-4))}</code>`,
       mainKb(uid));
   }
 
@@ -1174,30 +1132,37 @@ async function showUsersList(ctx, chatId) {
   return sendAdminSettingsMenu(ctx, chatId);
 }
 
-// ── 24. Token info ────────────────────────────────────────────────────────────
-async function sendTokenInfo(ctx, chatId) {
-  const lines = ["🔑 <b>Token Info</b>\n", "━━━ 🏦 Bakong ━━━"];
-  if (!BAKONG_API_TOKEN) {
-    lines.push("❌ មិនទាន់មាន Bakong Token ទេ។");
-  } else {
-    const { exp, daysLeft } = decodeJWTExpiry(BAKONG_API_TOKEN);
-    lines.push(`Token: <code>${esc(BAKONG_API_TOKEN.slice(0,10))}…</code>`);
-    if (exp) {
-      lines.push(`📅 Expire: <b>${exp.toISOString().slice(0,16)} UTC</b>`);
-      lines.push(`⏳ ស្ថានភាព: ${daysStatus(daysLeft)}`);
-    } else {
-      lines.push("📅 Expire: <b>មិនអាចបំបែក JWT បាន</b>");
+// ── 24. KhPay account info ────────────────────────────────────────────────────
+async function sendKhpayInfo(ctx, chatId) {
+  try {
+    const data = await khpayRequest("GET", "/me");
+    if (!data.success) {
+      return sendMsg(ctx, chatId,
+        `💰 <b>KhPay API Info</b>\n\n❌ ${esc(data.error || "API Error")}`, KHPAY_SUBMENU_KB);
     }
+    const d   = data.data;
+    const key = KHPAY_API_KEY;
+    const masked = `${key.slice(0,12)}…${key.slice(-4)}`;
+    const lines = [
+      "💰 <b>KhPay Account Info</b>",
+      "━━━━━━━━━━━━━━━━━━━",
+      `👤 <b>ឈ្មោះ:</b> ${esc(d.name || "—")}`,
+      `📧 <b>Email:</b> <code>${esc(d.email || "—")}</code>`,
+      `📦 <b>Plan:</b> ${esc(d.plan || "—")}`,
+      `🔑 <b>API Key:</b> <code>${esc(masked)}</code>`,
+      `💳 <b>Bakong:</b> ${d.bakong_configured ? "✅ Configured" : "❌ Not set"}`,
+      `🔗 <b>Payway:</b> ${d.payway_link_set ? "✅ Linked" : "❌ Not linked"}`,
+      "━━━━━━━━━━━━━━━━━━━",
+      `📊 <b>ការប្រើប្រាស់ API:</b>`,
+      `   • ថ្ងៃនេះ: ${d.usage?.today ?? 0}`,
+      `   • ខែនេះ: ${d.usage?.month ?? 0}`,
+      `   • សរុប: ${d.usage?.total ?? 0}`,
+    ];
+    return sendMsg(ctx, chatId, lines.join("\n"), KHPAY_SUBMENU_KB);
+  } catch (e) {
+    return sendMsg(ctx, chatId,
+      `💰 <b>KhPay API Info</b>\n\n❌ Error: <code>${esc(e.message)}</code>`, KHPAY_SUBMENU_KB);
   }
-  lines.push("\n━━━ 📧 Dropmail ━━━");
-  if (!DROPMAIL_API_TOKEN) {
-    lines.push("❌ មិនទាន់មាន Dropmail Token ទេ។");
-  } else {
-    const m = DROPMAIL_API_TOKEN.slice(0,6) + "…" + DROPMAIL_API_TOKEN.slice(-4);
-    lines.push(`Token: <code>${esc(m)}</code>`);
-    if (DROPMAIL_TOKEN_EXPIRY) lines.push(`📅 Expire: <b>${esc(DROPMAIL_TOKEN_EXPIRY)}</b>`);
-  }
-  return sendMsg(ctx, chatId, lines.join("\n"), BAKONG_SUBMENU_KB);
 }
 
 // ── 25. Startup ───────────────────────────────────────────────────────────────
@@ -1213,11 +1178,8 @@ function loadAll() {
   const pm = getSetting("PAYMENT_NAME");       if (pm)   PAYMENT_NAME = pm;
   const mm = getSetting("MAINTENANCE_MODE");   if (mm)   MAINTENANCE_MODE = mm === "true";
   const ch = getSetting("TELEGRAM_CHANNEL_ID"); if (ch) CHANNEL_ID = ch;
-  const bt = getSetting("BAKONG_API_TOKEN");   if (bt)   { BAKONG_API_TOKEN = bt; BAKONG_TOKEN = bt; }
-  const br = getSetting("BAKONG_RELAY_TOKEN"); if (br)   { BAKONG_RELAY_TOKEN = br; BAKONG_TOKEN = br; }
+  const kk = getSetting("KHPAY_API_KEY");      if (kk)   KHPAY_API_KEY = kk;
   const ea = getSetting("EXTRA_ADMIN_IDS");    if (ea)   { try { EXTRA_ADMIN_IDS = new Set(JSON.parse(ea).map(Number)); } catch {} }
-  const dm = getSetting("DROPMAIL_API_TOKEN"); if (dm)   DROPMAIL_API_TOKEN = dm;
-  const de = getSetting("DROPMAIL_TOKEN_EXPIRY"); if (de) DROPMAIL_TOKEN_EXPIRY = de;
 
   const couponCount = Object.values(accounts_data.account_types).reduce((s, a) => s + a.length, 0);
   console.log(`[INFO] Loaded: ${couponCount} coupons, ${Object.keys(known_users).length} users, ${purchases.length} purchases`);
