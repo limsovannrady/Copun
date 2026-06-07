@@ -1,45 +1,49 @@
-# [Project name]
+# Telegram KHQR Bot
 
-_Replace the heading above with the project's name, and this line with one sentence describing what this app does for users._
+Bot Telegram សម្រាប់លក់ coupon/account ដោយប្រើ Bakong KHQR payment — 100% JavaScript (Telegraf v4).
 
-## Run & Operate
+## Run
 
-- `pnpm --filter @workspace/api-server run dev` — run the API server (port 5000)
-- `pnpm run typecheck` — full typecheck across all packages
-- `pnpm run build` — typecheck + build all packages
-- `pnpm --filter @workspace/api-spec run codegen` — regenerate API hooks and Zod schemas from the OpenAPI spec
-- `pnpm --filter @workspace/db run push` — push DB schema changes (dev only)
-- Required env: `DATABASE_URL` — Postgres connection string
+```
+cd telegram-bot && node bot.js
+```
+
+Replit Workflow: **Telegram Bot** → `cd telegram-bot && node bot.js`
 
 ## Stack
 
-- pnpm workspaces, Node.js 24, TypeScript 5.9
-- API: Express 5
-- DB: PostgreSQL + Drizzle ORM
-- Validation: Zod (`zod/v4`), `drizzle-zod`
-- API codegen: Orval (from OpenAPI spec)
-- Build: esbuild (CJS bundle)
+- Node.js 24, ES Modules
+- Telegraf v4 (Telegram Bot API)
+- qrcode (QR generation)
+- JSON file persistence (no database)
 
-## Where things live
+## Files
 
-_Populate as you build — short repo map plus pointers to the source-of-truth file for DB schema, API contracts, theme files, etc._
+```
+telegram-bot/
+  bot.js          ← main bot (single file)
+  package.json
+  data/
+    accounts.json   ← coupon stock + prices
+    sessions.json   ← active user sessions
+    settings.json   ← bot settings (payment name, bakong token, etc.)
+    users.json      ← known users
+    purchases.json  ← purchase history
+```
 
-## Architecture decisions
+## Environment
 
-_Populate as you build — non-obvious choices a reader couldn't infer from the code (3-5 bullets)._
+- `TELEGRAM_BOT_TOKEN` — required (set in Replit Secrets)
 
-## Product
+## Admin
 
-_Describe the high-level user-facing capabilities of this app once they exist._
+- Admin ID: `5002402843` (hardcoded in bot.js)
+- Admin sees `⚙️កំណត់` button in keyboard
+- All settings stored in `data/settings.json`
 
 ## User preferences
 
-_Populate as you build — explicit user instructions worth remembering across sessions._
-
-## Gotchas
-
-_Populate as you build — sharp edges, "always run X before Y" rules._
-
-## Pointers
-
-- See the `pnpm-workspace` skill for workspace structure, TypeScript setup, and package details
+- Bot must be 100% JavaScript (no Python, no Pyrogram)
+- No database — JSON files only
+- Code structure mirrors original GitHub repo (shopnowkh-cloud)
+- Single file: bot.js only
