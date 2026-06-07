@@ -1,6 +1,7 @@
 import fs from "fs";
 import path from "path";
 import crypto from "crypto";
+import http from "http";
 import { fileURLToPath } from "url";
 import QRCode from "qrcode";
 import { Telegraf, Markup } from "telegraf";
@@ -21,6 +22,9 @@ let   DROPMAIL_TOKEN         = "";
 const KHPAY_BASE             = "https://www.khpay.site/api/v1";
 const PAYMENT_TIMEOUT_SEC    = 60;
 const PAYMENT_POLL_INTERVAL  = 5;
+const WEBHOOK_PORT           = 5000;
+let   WEBHOOK_SECRET         = "";   // loaded/generated in loadAll()
+let   WEBHOOK_URL            = "";
 
 // ── 2. DB file ────────────────────────────────────────────────────────────────
 const DB_FILE = path.join(__dirname, "db.json");
@@ -291,7 +295,11 @@ async function khpayRequest(method, path, body = null) {
 
 async function createKhpayPayment(amount, note = "") {
   try {
-    const data = await khpayRequest("POST", "/bakong/generate", { amount, note: note || PAYMENT_NAME });
+    const data = await khpayRequest("POST", "/bakong/generate", {
+      amount,
+      note: note || PAYMENT_NAME,
+      callback_url: WEBHOOK_URL,
+    });
     if (!data.success) {
       return { imgBuffer: null, transaction_id: null, error: data.error || "API error" };
     }
@@ -485,6 +493,67 @@ async function startPaymentForSession(ctx, chatId, userId, session, cbQuery = nu
 
   console.log(`[INFO] KhPay QR sent to user ${userId}: Amount $${session.total_price}, TxnID: ${transaction_id}`);
   return true;
+}
+
+// ── KhPay Webhook HTTP Server ─────────────────────────────────────────────────
+function startWebhookServer() {
+  const server = http.createServer((req, res) => {
+    const url = new URL(req.url, `http://localhost`);
+
+    // Health check
+    if (req.method === "GET" && url.pathname === "/") {
+      res.writeHead(200); res.end("OK"); return;
+    }
+
+    // Only handle POST /khpay-webhook
+    if (req.method !== "POST" || url.pathname !== "/khpay-webhook") {
+      res.writeHead(404); res.end(); return;
+    }
+
+    // Verify secret
+    if (url.searchParams.get("secret") !== WEBHOOK_SECRET) {
+      console.warn("[Webhook] Rejected: invalid secret");
+      res.writeHead(403); res.end(); return;
+    }
+
+    let body = "";
+    req.on("data", chunk => { body += chunk; });
+    req.on("end", async () => {
+      res.writeHead(200); res.end("OK");
+      try {
+        const payload = JSON.parse(body);
+        const txnId   = payload?.transaction_id ?? payload?.data?.transaction_id;
+        const status  = (payload?.status ?? payload?.data?.status ?? "").toLowerCase();
+        const isPaid  = status === "paid" || status === "success" || status === "completed"
+                     || payload?.data?.transaction != null;
+
+        console.log(`[Webhook] Received: txn=${txnId} status=${status}`);
+        if (!txnId || !isPaid) return;
+
+        // Find matching pending session
+        const entry = Object.entries(user_sessions).find(
+          ([, s]) => s.state === "payment_pending" && s.transaction_id === txnId
+        );
+        if (!entry) return;
+
+        const [uidStr, sess] = entry;
+        const userId = Number(uidStr);
+        if (sess.state !== "payment_pending") return;
+        sess.state = "delivering";
+
+        console.log(`[Webhook] ✅ Payment confirmed instantly for user ${userId}: ${txnId}`);
+        const fakeCtx = { telegram: bot.telegram };
+        await deliverAccounts(fakeCtx, userId, userId, sess, payload?.data ?? payload);
+      } catch (e) {
+        console.warn("[Webhook] Error processing payload:", e.message);
+      }
+    });
+  });
+
+  server.listen(WEBHOOK_PORT, () => {
+    console.log(`[Webhook] Server listening on port ${WEBHOOK_PORT}`);
+    console.log(`[Webhook] URL: ${WEBHOOK_URL}`);
+  });
 }
 
 // ── Global payment watchdog (replaces per-session setInterval) ─────────────────
@@ -1458,6 +1527,13 @@ function loadAll() {
   const kk = getSetting("KHPAY_API_KEY");      if (kk)   KHPAY_API_KEY = kk;
   const ea = getSetting("EXTRA_ADMIN_IDS");    if (ea)   { try { EXTRA_ADMIN_IDS = new Set(JSON.parse(ea).map(Number)); } catch {} }
   const dt = getSetting("DROPMAIL_TOKEN");     if (dt)   DROPMAIL_TOKEN = dt;
+
+  // Persistent webhook secret — generate once, reuse on restart
+  let whs = getSetting("WEBHOOK_SECRET");
+  if (!whs) { whs = crypto.randomBytes(16).toString("hex"); setSetting("WEBHOOK_SECRET", whs); }
+  WEBHOOK_SECRET = whs;
+  WEBHOOK_URL    = `https://${process.env.REPLIT_DEV_DOMAIN || "localhost"}/khpay-webhook?secret=${WEBHOOK_SECRET}`;
+
   loadSeenHashes();
 
   const couponCount = Object.values(accounts_data.account_types).reduce((s, a) => s + a.length, 0);
@@ -1477,6 +1553,7 @@ bot.launch();
     try { await bot.telegram.sendMessage(ADMIN_ID, "✅ <b>Bot ចាប់ផ្ដើម! (JavaScript — 100% GitHub structure)</b>", { parse_mode: "HTML" }); } catch {}
   } catch {}
   await recoverPendingSessions();
+  startWebhookServer();
   startPaymentWatchdog();
   startEmailLivePolling();
 })();
