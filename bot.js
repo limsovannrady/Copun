@@ -94,7 +94,6 @@ const BTN_DELETE_CONFIRM    = "✅ បញ្ជាក់លុប";
 const BTN_DELETE_CANCEL     = "🚫 បោះបង់ការលុប";
 const BTN_BROADCAST_CONFIRM = "✅ បញ្ជាក់ផ្សាយ";
 const BTN_BROADCAST_CANCEL  = "🚫 បោះបង់ការផ្សាយ";
-const BTN_LOGO              = "📷 Logo";
 
 const ADMIN_SETTINGS_BTN    = "⚙️កំណត់";
 
@@ -105,7 +104,6 @@ const ADMIN_BUTTON_LABELS = new Set([
   BTN_CHANNEL_EDIT, BTN_CHANNEL_CLEAR, BTN_ADMIN_ADD, BTN_ADMIN_REMOVE,
   BTN_MAINT_ON, BTN_MAINT_OFF, BTN_CANCEL_INPUT,
   BTN_DELETE_CONFIRM, BTN_DELETE_CANCEL, BTN_BROADCAST_CONFIRM, BTN_BROADCAST_CANCEL,
-  BTN_LOGO,
   ADMIN_SETTINGS_BTN,
 ]);
 
@@ -120,7 +118,6 @@ const ADMIN_SETTINGS_KB = Markup.keyboard([
   [BTN_USERS,       BTN_KHPAY],
   [BTN_CHANNEL,     BTN_ADMINS],
   [BTN_BROADCAST,   BTN_MAINTENANCE],
-  [BTN_LOGO],
 ]).resize().persistent();
 
 const CANCEL_INPUT_KB    = Markup.keyboard([[BTN_CANCEL_INPUT]]).resize().persistent();
@@ -1002,30 +999,6 @@ bot.on("text", async ctx => {
   await showAccountSelection(ctx, chatId);
 });
 
-// ── Photo handler (logo upload) ───────────────────────────────────────────────
-bot.on("photo", async ctx => {
-  const uid    = ctx.from.id;
-  const chatId = ctx.chat.id;
-  if (!isAdmin(uid)) return;
-
-  const sess = user_sessions[uid];
-  if (sess?.state !== "admin_input:logo") return;
-
-  try {
-    const photos  = ctx.message.photo;
-    const best    = photos[photos.length - 1];
-    const fileUrl = await ctx.telegram.getFileLink(best.file_id);
-    const res     = await fetch(fileUrl.href, { signal: AbortSignal.timeout(15000) });
-    if (!res.ok) throw new Error("Download failed");
-    const buf = Buffer.from(await res.arrayBuffer());
-    fs.writeFileSync(LOGO_PATH, buf);
-    _logoBuffer = null; // reset cache
-    delete user_sessions[uid]; saveSessions();
-    await sendMsg(ctx, chatId, "✅ <b>បានកំណត់ Logo ថ្មីរួចហើយ!</b>\n\nLogo នឹងបង្ហាញលើ QR Card ពេលបន្ទាប់។", ADMIN_SETTINGS_KB);
-  } catch (e) {
-    await sendMsg(ctx, chatId, `❌ <b>Upload បរាជ័យ:</b> <code>${esc(e.message)}</code>`);
-  }
-});
 
 // ── 20. Admin button dispatcher ───────────────────────────────────────────────
 async function dispatchAdminButton(ctx, chatId, uid, btn) {
@@ -1116,12 +1089,6 @@ async function dispatchAdminButton(ctx, chatId, uid, btn) {
       user_sessions[uid] = { state: "admin_input:broadcast" }; saveSessions();
       return sendMsg(ctx, chatId,
         "📢 សូមផ្ញើ​សារ​ដែល​ចង់​ផ្សាយ​ទៅ​អ្នក​ប្រើ​ប្រាស់​ទាំង​អស់៖\n\n<i>ចុច 🚫 បោះបង់ ដើម្បីបោះបង់</i>",
-        CANCEL_INPUT_KB);
-
-    case BTN_LOGO:
-      user_sessions[uid] = { state: "admin_input:logo" }; saveSessions();
-      return sendMsg(ctx, chatId,
-        "📷 <b>Upload Logo ថ្មី</b>\n\nសូមផ្ញើ​រូបភាព​ logo (JPG/PNG) ដែលអ្នកចង់​ប្រើ​លើ​ QR Card:\n\n<i>ចុច 🚫 បោះបង់ ដើម្បីបោះបង់</i>",
         CANCEL_INPUT_KB);
 
     default:
