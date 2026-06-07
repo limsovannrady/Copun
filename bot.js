@@ -578,13 +578,15 @@ async function deliverAccounts(ctx, chatId, userId, session, paymentData = null)
     });
     savePurchases();
 
-    // Send one message per coupon with clear format
+    // Send one message per coupon
     for (let i = 0; i < delivered.length; i++) {
       const acc    = delivered[i];
       const isLast = i === delivered.length - 1;
       const msg    =
-        `✅ <b>គូប៉ុង ${esc(account_type)} (${i + 1}/${quantity})</b>\n\n` +
-        `<code>${esc(formatAccount(acc))}</code>`;
+        `🎉 <b>ការទិញបានបញ្ជាក់ដោយជោគជ័យ</b>\n\n` +
+        `គូប៉ុងរបស់អ្នក៖ 👇\n\n` +
+        `<code>${esc(formatAccount(acc))}</code>\n\n` +
+        `<i>សូមអរគុណសម្រាប់ការទិញ 🙏</i>`;
       await sendMsg(ctx, chatId, msg, isLast ? mainKb(userId) : undefined);
     }
 
