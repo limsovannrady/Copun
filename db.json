@@ -8,12 +8,6 @@
       ],
       "Y": [
         {
-          "code": "104213kt@spymail.one"
-        },
-        {
-          "code": "bixfocgksybv@dropmail.me"
-        },
-        {
           "code": "09k39yev8c@spymail.one"
         },
         {
@@ -86,6 +80,21 @@
         }
       ],
       "purchased_at": "2026-06-07T17:25:51.904Z"
+    },
+    {
+      "user_id": 7433145236,
+      "account_type": "Y",
+      "quantity": 2,
+      "total_price": 0.02,
+      "accounts": [
+        {
+          "code": "104213kt@spymail.one"
+        },
+        {
+          "code": "bixfocgksybv@dropmail.me"
+        }
+      ],
+      "purchased_at": "2026-06-07T17:30:08.075Z"
     }
   ]
 }
