@@ -485,7 +485,7 @@ bot.command("start", async ctx => {
   if (sess?.state === "payment_pending") {
     return sendMsg(ctx, chatId,
       "⏳ <b>សូមបញ្ចប់ការទិញបច្ចុប្បន្នជាមុនសិន</b>\n\nអ្នកមានការបញ្ជាទិញមួយកំពុងដំណើរការ។ " +
-      "សូមបញ្ចប់ការទូទាត់ ឬចុច /cancel មុននឹងចាប់ផ្តើមការទិញថ្មី។");
+      "សូមបញ្ចប់ការទូទាត់ ឬចុច <b>🚫 បោះបង់</b> មុននឹងចាប់ផ្តើមការទិញថ្មី។");
   }
   delete user_sessions[uid];
   await showAccountSelection(ctx, chatId);
@@ -818,7 +818,7 @@ bot.on("text", async ctx => {
     if (sess?.state === "payment_pending") {
       return sendMsg(ctx, chatId,
         "⏳ <b>សូមបញ្ចប់ការទិញបច្ចុប្បន្នជាមុនសិន</b>\n\nអ្នកមានការបញ្ជាទិញមួយកំពុងដំណើរការ។ " +
-        "សូមបញ្ចប់ការទូទាត់ ឬចុច /cancel មុននឹងចាប់ផ្ដើមការទិញថ្មី។");
+        "សូមបញ្ចប់ការទូទាត់ ឬចុច <b>🚫 បោះបង់</b> មុននឹងចាប់ផ្ដើមការទិញថ្មី។");
     }
     delete user_sessions[uid];
     return showAccountSelection(ctx, chatId);
@@ -826,7 +826,7 @@ bot.on("text", async ctx => {
 
   // Default fallback
   if (user_sessions[uid]?.state === "payment_pending") {
-    return sendMsg(ctx, chatId, "⏳ <b>សូមបញ្ចប់ការទូទាត់ QR ជាមុនសិន</b>\nឬចុច /cancel ដើម្បីបោះបង់");
+    return sendMsg(ctx, chatId, "⏳ <b>សូមបញ្ចប់ការទូទាត់ QR ជាមុនសិន</b>\nឬចុច <b>🚫 បោះបង់</b> ដើម្បីបោះបង់");
   }
   await showAccountSelection(ctx, chatId);
 });

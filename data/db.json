@@ -25,7 +25,11 @@
       }
     ]
   },
-  "sessions": {},
+  "sessions": {
+    "5002402843": {
+      "state": "admin_input:secret_add"
+    }
+  },
   "settings": {
     "MAINTENANCE_MODE": false,
     "TELEGRAM_CHANNEL_ID": "-1003756077815"
