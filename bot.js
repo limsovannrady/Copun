@@ -28,8 +28,16 @@ const WEBHOOK_PORT           = 5000;
 let   WEBHOOK_SECRET         = "";   // loaded/generated in loadAll()
 let   WEBHOOK_URL            = "";
 
-// ── 2. DB file ────────────────────────────────────────────────────────────────
-const DB_FILE = path.join(__dirname, "db.json");
+// ── 2. DB file & logo path ────────────────────────────────────────────────────
+const DB_FILE   = path.join(__dirname, "db.json");
+const LOGO_PATH = path.join(__dirname, "logo.jpg");
+let   _logoBuffer = null;
+async function getLogoBuffer() {
+  if (_logoBuffer) return _logoBuffer;
+  if (!fs.existsSync(LOGO_PATH)) return null;
+  try { _logoBuffer = fs.readFileSync(LOGO_PATH); } catch {}
+  return _logoBuffer;
+}
 
 // ── 3. In-memory state ────────────────────────────────────────────────────────
 let accounts_data  = { accounts: [], account_types: {}, prices: {} };
@@ -86,6 +94,7 @@ const BTN_DELETE_CONFIRM    = "✅ បញ្ជាក់លុប";
 const BTN_DELETE_CANCEL     = "🚫 បោះបង់ការលុប";
 const BTN_BROADCAST_CONFIRM = "✅ បញ្ជាក់ផ្សាយ";
 const BTN_BROADCAST_CANCEL  = "🚫 បោះបង់ការផ្សាយ";
+const BTN_LOGO              = "📷 Logo";
 
 const ADMIN_SETTINGS_BTN    = "⚙️កំណត់";
 
@@ -96,7 +105,7 @@ const ADMIN_BUTTON_LABELS = new Set([
   BTN_CHANNEL_EDIT, BTN_CHANNEL_CLEAR, BTN_ADMIN_ADD, BTN_ADMIN_REMOVE,
   BTN_MAINT_ON, BTN_MAINT_OFF, BTN_CANCEL_INPUT,
   BTN_DELETE_CONFIRM, BTN_DELETE_CANCEL, BTN_BROADCAST_CONFIRM, BTN_BROADCAST_CANCEL,
-
+  BTN_LOGO,
   ADMIN_SETTINGS_BTN,
 ]);
 
@@ -111,6 +120,7 @@ const ADMIN_SETTINGS_KB = Markup.keyboard([
   [BTN_USERS,       BTN_KHPAY],
   [BTN_CHANNEL,     BTN_ADMINS],
   [BTN_BROADCAST,   BTN_MAINTENANCE],
+  [BTN_LOGO],
 ]).resize().persistent();
 
 const CANCEL_INPUT_KB    = Markup.keyboard([[BTN_CANCEL_INPUT]]).resize().persistent();
@@ -165,15 +175,17 @@ async function khpayRequest(method, path, body = null) {
 }
 
 async function generateKHQRCard(qr_string, amount, merchantName) {
-  const QR_SIZE  = 250;
-  const CARD_W   = 300;
-  const CARD_H   = 460;
-  const QR_X     = Math.round((CARD_W - QR_SIZE) / 2);
-  const QR_Y     = 168;
-  const ICON_R   = 22;
+  const CARD_W    = 500;
+  const CARD_H    = 700;
+  const QR_SIZE   = 320;
+  const LOGO_SIZE = 110;
+  const QR_X      = Math.round((CARD_W - QR_SIZE) / 2);
+  const QR_Y      = 275;
+  const LOGO_X    = Math.round((CARD_W - LOGO_SIZE) / 2);
+  const LOGO_Y    = 35;
 
-  const amtFormatted = Number(amount).toFixed(2).replace(".", ",");
-  const name = esc(String(merchantName || PAYMENT_NAME).slice(0, 30));
+  const amtFormatted = Number(amount).toFixed(2);
+  const name = esc(String(merchantName || PAYMENT_NAME).slice(0, 40));
 
   // 1. QR code PNG
   const qrBuffer = await QRCode.toBuffer(qr_string, {
@@ -183,50 +195,51 @@ async function generateKHQRCard(qr_string, amount, merchantName) {
     color: { dark: "#000000", light: "#ffffff" },
   });
 
-  // 2. Card background SVG (header + text + divider)
+  // 2. Card background SVG
   const cardSvg = `<svg width="${CARD_W}" height="${CARD_H}" xmlns="http://www.w3.org/2000/svg">
-    <rect width="${CARD_W}" height="${CARD_H}" fill="white" rx="14" ry="14"/>
-    <rect width="${CARD_W}" height="66" fill="#C8111A" rx="14" ry="14"/>
-    <rect y="46" width="${CARD_W}" height="20" fill="#C8111A"/>
-    <text x="${CARD_W / 2}" y="44"
-      font-family="Arial Black,Impact,sans-serif"
-      font-size="27" font-weight="900" fill="white"
-      text-anchor="middle" letter-spacing="4">KHQR</text>
-    <text x="22" y="102"
-      font-family="Arial,sans-serif" font-size="15" fill="#444">${name}</text>
-    <text x="22" y="138" font-family="Arial,sans-serif" fill="#111">
-      <tspan font-size="24" font-weight="bold">${amtFormatted}</tspan>
-      <tspan font-size="13" fill="#888" dx="6" dy="-2">USD</tspan>
-    </text>
-    <line x1="15" y1="155" x2="${CARD_W - 15}" y2="155"
-      stroke="#ddd" stroke-width="1.5" stroke-dasharray="6,4"/>
+    <rect width="${CARD_W}" height="${CARD_H}" fill="white"/>
+    <rect width="${CARD_W}" height="12" fill="#C8111A"/>
+    <rect y="${CARD_H - 12}" width="${CARD_W}" height="12" fill="#C8111A"/>
+    <circle cx="${CARD_W}" cy="${CARD_H}" r="140" fill="#C8111A"/>
+    <text x="${CARD_W / 2}" y="195"
+      font-family="Arial,sans-serif" font-size="18" fill="#888"
+      text-anchor="middle" font-style="italic">Scan. Pay. Done.</text>
+    <line x1="60" y1="212" x2="${CARD_W - 60}" y2="212" stroke="#eee" stroke-width="1"/>
+    <text x="${CARD_W / 2}" y="240"
+      font-family="Arial,sans-serif" font-size="15" fill="#555"
+      text-anchor="middle">${name}</text>
+    <text x="${CARD_W / 2}" y="268"
+      font-family="Arial,sans-serif" font-size="21" fill="#111"
+      text-anchor="middle" font-weight="bold">${amtFormatted} USD</text>
+    <text x="32" y="647"
+      font-family="Arial,sans-serif" font-size="11" fill="#aaa">Member of</text>
+    <text x="32" y="673"
+      font-family="Arial Black,Impact,sans-serif" font-size="24"
+      fill="#C8111A" font-weight="900" letter-spacing="3">KHQR</text>
   </svg>`;
 
   const cardBg = await sharp(Buffer.from(cardSvg)).png().toBuffer();
 
-  // 3. Composite QR onto card
-  const withQR = await sharp(cardBg)
-    .composite([{ input: qrBuffer, top: QR_Y, left: QR_X }])
-    .png()
-    .toBuffer();
+  // 3. Build composites list — QR first
+  const composites = [{ input: qrBuffer, top: QR_Y, left: QR_X }];
 
-  // 4. $ icon circle in centre of QR
-  const iconSvg = `<svg width="${ICON_R * 2}" height="${ICON_R * 2}" xmlns="http://www.w3.org/2000/svg">
-    <circle cx="${ICON_R}" cy="${ICON_R}" r="${ICON_R - 1}"
-      fill="white" stroke="#bbb" stroke-width="1.5"/>
-    <text x="${ICON_R}" y="${ICON_R + 8}"
-      font-family="Arial,sans-serif" font-size="21"
-      fill="#333" text-anchor="middle" font-weight="bold">$</text>
-  </svg>`;
-  const iconBuf = await sharp(Buffer.from(iconSvg)).png().toBuffer();
+  // 4. Logo circle (if logo.jpg exists)
+  const logoRaw = await getLogoBuffer();
+  if (logoRaw) {
+    const mask = Buffer.from(
+      `<svg width="${LOGO_SIZE}" height="${LOGO_SIZE}" xmlns="http://www.w3.org/2000/svg">
+        <circle cx="${LOGO_SIZE / 2}" cy="${LOGO_SIZE / 2}" r="${LOGO_SIZE / 2}" fill="white"/>
+      </svg>`
+    );
+    const logoCircle = await sharp(logoRaw)
+      .resize(LOGO_SIZE, LOGO_SIZE, { fit: "cover", position: "centre" })
+      .composite([{ input: mask, blend: "dest-in" }])
+      .png()
+      .toBuffer();
+    composites.push({ input: logoCircle, top: LOGO_Y, left: LOGO_X });
+  }
 
-  const iconTop  = QR_Y + Math.round(QR_SIZE / 2) - ICON_R;
-  const iconLeft = QR_X + Math.round(QR_SIZE / 2) - ICON_R;
-
-  return sharp(withQR)
-    .composite([{ input: iconBuf, top: iconTop, left: iconLeft }])
-    .png()
-    .toBuffer();
+  return sharp(cardBg).composite(composites).png().toBuffer();
 }
 
 async function createKhpayPayment(amount, note = "") {
@@ -995,6 +1008,31 @@ bot.on("text", async ctx => {
   await showAccountSelection(ctx, chatId);
 });
 
+// ── Photo handler (logo upload) ───────────────────────────────────────────────
+bot.on("photo", async ctx => {
+  const uid    = ctx.from.id;
+  const chatId = ctx.chat.id;
+  if (!isAdmin(uid)) return;
+
+  const sess = user_sessions[uid];
+  if (sess?.state !== "admin_input:logo") return;
+
+  try {
+    const photos  = ctx.message.photo;
+    const best    = photos[photos.length - 1];
+    const fileUrl = await ctx.telegram.getFileLink(best.file_id);
+    const res     = await fetch(fileUrl.href, { signal: AbortSignal.timeout(15000) });
+    if (!res.ok) throw new Error("Download failed");
+    const buf = Buffer.from(await res.arrayBuffer());
+    fs.writeFileSync(LOGO_PATH, buf);
+    _logoBuffer = null; // reset cache
+    delete user_sessions[uid]; saveSessions();
+    await sendMsg(ctx, chatId, "✅ <b>បានកំណត់ Logo ថ្មីរួចហើយ!</b>\n\nLogo នឹងបង្ហាញលើ QR Card ពេលបន្ទាប់។", ADMIN_SETTINGS_KB);
+  } catch (e) {
+    await sendMsg(ctx, chatId, `❌ <b>Upload បរាជ័យ:</b> <code>${esc(e.message)}</code>`);
+  }
+});
+
 // ── 20. Admin button dispatcher ───────────────────────────────────────────────
 async function dispatchAdminButton(ctx, chatId, uid, btn) {
   switch (btn) {
@@ -1086,6 +1124,11 @@ async function dispatchAdminButton(ctx, chatId, uid, btn) {
         "📢 សូមផ្ញើ​សារ​ដែល​ចង់​ផ្សាយ​ទៅ​អ្នក​ប្រើ​ប្រាស់​ទាំង​អស់៖\n\n<i>ចុច 🚫 បោះបង់ ដើម្បីបោះបង់</i>",
         CANCEL_INPUT_KB);
 
+    case BTN_LOGO:
+      user_sessions[uid] = { state: "admin_input:logo" }; saveSessions();
+      return sendMsg(ctx, chatId,
+        "📷 <b>Upload Logo ថ្មី</b>\n\nសូមផ្ញើ​រូបភាព​ logo (JPG/PNG) ដែលអ្នកចង់​ប្រើ​លើ​ QR Card:\n\n<i>ចុច 🚫 បោះបង់ ដើម្បីបោះបង់</i>",
+        CANCEL_INPUT_KB);
 
     default:
       return sendAdminSettingsMenu(ctx, chatId);
