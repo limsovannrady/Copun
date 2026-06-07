@@ -1,75 +1,13 @@
 {
   "accounts": {
-    "account_types": {
-      "I": [
-        {
-          "code": "Hsis@929.c"
-        }
-      ],
-      "http://www.khpay.site": []
-    },
-    "prices": {
-      "I": 0.01,
-      "http://www.khpay.site": 0.01
-    },
-    "accounts": [
-      {
-        "code": "1"
-      },
-      {
-        "code": "Hsis@929.c"
-      }
-    ]
+    "accounts": [],
+    "account_types": {},
+    "prices": {}
   },
-  "sessions": {
-    "7433145236": {
-      "state": "waiting_for_quantity",
-      "account_type": "I",
-      "price": 0.01,
-      "available_count": 1,
-      "started_at": 1780848257989
-    }
-  },
+  "sessions": {},
   "settings": {
-    "MAINTENANCE_MODE": false,
-    "TELEGRAM_CHANNEL_ID": "-1003756077815",
-    "EXTRA_ADMIN_IDS": "[]",
-    "DROPMAIL_TOKEN": "af_AQVqJFNtEb57OhqDSUSAq-URfd2Ii2mfMRuUdFrd",
-    "DROPMAIL_SESSIONS": "{}",
-    "DROPMAIL_SEEN": "[\"cc8dab76e550366d9d9e5b2befe482b1\"]",
-    "WEBHOOK_SECRET": "a3562453cc97120f94673729a41a2674"
+    "WEBHOOK_SECRET": "c859b44c49aec78520e2b3aed663d2a0"
   },
-  "users": {
-    "7433145236": {
-      "first_name": "MrDauau",
-      "last_name": "",
-      "username": ""
-    }
-  },
-  "purchases": [
-    {
-      "user_id": 5002402843,
-      "account_type": "I",
-      "quantity": 1,
-      "total_price": 0.01,
-      "accounts": [
-        {
-          "code": "Iddhsi"
-        }
-      ],
-      "purchased_at": "2026-06-07T11:54:35.800Z"
-    },
-    {
-      "user_id": 5002402843,
-      "account_type": "I",
-      "quantity": 1,
-      "total_price": 0.01,
-      "accounts": [
-        {
-          "code": "Iddhsi"
-        }
-      ],
-      "purchased_at": "2026-06-07T12:14:32.767Z"
-    }
-  ]
+  "users": {},
+  "purchases": []
 }
