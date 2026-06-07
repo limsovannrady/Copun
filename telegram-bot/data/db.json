@@ -1,0 +1,41 @@
+{
+  "accounts": {
+    "account_types": {
+      "I": [
+        {
+          "code": "Iehs8eehw"
+        },
+        {
+          "code": "Iddhsi"
+        }
+      ],
+      "http://www.khpay.site": [
+        {
+          "code": "1"
+        }
+      ]
+    },
+    "prices": {
+      "I": 0.01,
+      "http://www.khpay.site": 0.01
+    },
+    "accounts": [
+      {
+        "code": "1"
+      }
+    ]
+  },
+  "sessions": {},
+  "settings": {
+    "MAINTENANCE_MODE": false,
+    "TELEGRAM_CHANNEL_ID": "-1003756077815"
+  },
+  "users": {
+    "7433145236": {
+      "first_name": "MrDauau",
+      "last_name": "",
+      "username": ""
+    }
+  },
+  "purchases": []
+}

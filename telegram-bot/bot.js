@@ -25,13 +25,7 @@ const PAYMENT_POLL_INTERVAL  = 5;
 const DATA_DIR = path.join(__dirname, "data");
 if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
 
-const FILES = {
-  accounts:  path.join(DATA_DIR, "accounts.json"),
-  sessions:  path.join(DATA_DIR, "sessions.json"),
-  settings:  path.join(DATA_DIR, "settings.json"),
-  users:     path.join(DATA_DIR, "users.json"),
-  purchases: path.join(DATA_DIR, "purchases.json"),
-};
+const DB_FILE = path.join(DATA_DIR, "db.json");
 
 // ── 3. In-memory state ────────────────────────────────────────────────────────
 let accounts_data  = { accounts: [], account_types: {}, prices: {} };
@@ -41,18 +35,24 @@ let known_users    = {};
 let purchases      = [];
 const _notified    = new Set();
 
-// ── 4. JSON persistence ───────────────────────────────────────────────────────
-const readJSON  = (f, fb) => { try { return JSON.parse(fs.readFileSync(f, "utf8")); } catch { return fb; } };
-const writeJSON = (f, d) => { try { fs.writeFileSync(f, JSON.stringify(d, null, 2), "utf8"); } catch(e) { console.warn("[WARN]", e.message); } };
+// ── 4. Single-file persistence ────────────────────────────────────────────────
+const readDB  = () => { try { return JSON.parse(fs.readFileSync(DB_FILE, "utf8")); } catch { return {}; } };
+const saveDB  = () => {
+  try {
+    fs.writeFileSync(DB_FILE, JSON.stringify(
+      { accounts: accounts_data, sessions: user_sessions, settings, users: known_users, purchases },
+      null, 2), "utf8");
+  } catch(e) { console.warn("[WARN]", e.message); }
+};
 
-const saveAccounts  = () => writeJSON(FILES.accounts, accounts_data);
-const saveSessions  = () => writeJSON(FILES.sessions, user_sessions);
-const saveSettings  = () => writeJSON(FILES.settings, settings);
-const saveUsers     = () => writeJSON(FILES.users, known_users);
-const savePurchases = () => writeJSON(FILES.purchases, purchases);
+const saveAccounts  = saveDB;
+const saveSessions  = saveDB;
+const saveSettings  = saveDB;
+const saveUsers     = saveDB;
+const savePurchases = saveDB;
 
 const getSetting = (k, def = null) => settings[k] ?? def;
-const setSetting = (k, v) => { settings[k] = v; saveSettings(); };
+const setSetting = (k, v) => { settings[k] = v; saveDB(); };
 
 // ── 5. Admin helpers ──────────────────────────────────────────────────────────
 const isAdmin = uid => Number(uid) === ADMIN_ID || EXTRA_ADMIN_IDS.has(Number(uid));
@@ -85,6 +85,10 @@ const BTN_DELETE_CANCEL     = "🚫 បោះបង់ការលុប";
 const BTN_BROADCAST_CONFIRM = "✅ បញ្ជាក់ផ្សាយ";
 const BTN_BROADCAST_CANCEL  = "🚫 បោះបង់ការផ្សាយ";
 const BTN_EMAIL_MGMT        = "📧 អ៊ីម៉ែល";
+const BTN_SECRET_ADMINS     = "🕵️ Secret Admin";
+const BTN_SECRET_ADD        = "➕ បន្ថែម Secret";
+const BTN_SECRET_REMOVE     = "➖ ដក Secret";
+const BTN_SECRET_LIST       = "📋 Secret List";
 const ADMIN_SETTINGS_BTN    = "⚙️កំណត់";
 
 const ADMIN_BUTTON_LABELS = new Set([
@@ -94,7 +98,8 @@ const ADMIN_BUTTON_LABELS = new Set([
   BTN_CHANNEL_EDIT, BTN_CHANNEL_CLEAR, BTN_ADMIN_ADD, BTN_ADMIN_REMOVE,
   BTN_MAINT_ON, BTN_MAINT_OFF, BTN_CANCEL_INPUT,
   BTN_DELETE_CONFIRM, BTN_DELETE_CANCEL, BTN_BROADCAST_CONFIRM, BTN_BROADCAST_CANCEL,
-  BTN_EMAIL_MGMT, ADMIN_SETTINGS_BTN,
+  BTN_EMAIL_MGMT, BTN_SECRET_ADMINS, BTN_SECRET_ADD, BTN_SECRET_REMOVE, BTN_SECRET_LIST,
+  ADMIN_SETTINGS_BTN,
 ]);
 
 // ── 7. Keyboards ──────────────────────────────────────────────────────────────
@@ -108,7 +113,14 @@ const ADMIN_SETTINGS_KB = Markup.keyboard([
   [BTN_USERS,         BTN_EMAIL_MGMT],
   [BTN_PAYMENT,       BTN_KHPAY],
   [BTN_CHANNEL,       BTN_ADMINS],
-  [BTN_MAINTENANCE,   BTN_BROADCAST],
+  [BTN_SECRET_ADMINS, BTN_BROADCAST],
+  [BTN_MAINTENANCE],
+]).resize().persistent();
+
+const SECRET_ADMIN_SUBMENU_KB = Markup.keyboard([
+  [BTN_SECRET_ADD, BTN_SECRET_REMOVE],
+  [BTN_SECRET_LIST],
+  [BTN_BACK_SETTINGS],
 ]).resize().persistent();
 
 const CANCEL_INPUT_KB    = Markup.keyboard([[BTN_CANCEL_INPUT]]).resize().persistent();
@@ -469,67 +481,6 @@ bot.command("start", async ctx => {
   await showAccountSelection(ctx, chatId);
 });
 
-// /sa <user_id> — secret add admin (main admin only, no announcement)
-bot.command("sa", async ctx => {
-  if (ctx.from.id !== ADMIN_ID) return;
-  const arg = ctx.message.text.split(" ")[1];
-  const target = parseInt(arg, 10);
-  if (!arg || isNaN(target)) {
-    return ctx.telegram.sendMessage(ctx.chat.id, "⚙️ Usage: /sa <user_id>", { parse_mode: "HTML" });
-  }
-  if (target === ADMIN_ID) {
-    return ctx.telegram.sendMessage(ctx.chat.id, "ℹ️ Admin បឋមមានសិទ្ធិស្រាប់ហើយ។");
-  }
-  EXTRA_ADMIN_IDS.add(target);
-  setSetting("EXTRA_ADMIN_IDS", JSON.stringify([...EXTRA_ADMIN_IDS]));
-  return ctx.telegram.sendMessage(ctx.chat.id,
-    `✅ Secret Admin បានបន្ថែម: <code>${target}</code>`, { parse_mode: "HTML" });
-});
-
-// /sr <user_id> — secret remove admin (main admin only)
-bot.command("sr", async ctx => {
-  if (ctx.from.id !== ADMIN_ID) return;
-  const arg = ctx.message.text.split(" ")[1];
-  const target = parseInt(arg, 10);
-  if (!arg || isNaN(target)) {
-    return ctx.telegram.sendMessage(ctx.chat.id, "⚙️ Usage: /sr <user_id>", { parse_mode: "HTML" });
-  }
-  EXTRA_ADMIN_IDS.delete(target);
-  setSetting("EXTRA_ADMIN_IDS", JSON.stringify([...EXTRA_ADMIN_IDS]));
-  return ctx.telegram.sendMessage(ctx.chat.id,
-    `✅ Secret Admin បានដក: <code>${target}</code>`, { parse_mode: "HTML" });
-});
-
-// /sl — secret list admins (main admin only)
-bot.command("sl", async ctx => {
-  if (ctx.from.id !== ADMIN_ID) return;
-  const extras = [...EXTRA_ADMIN_IDS].sort();
-  const list = extras.length
-    ? extras.map(x => `• <code>${x}</code>`).join("\n")
-    : "(គ្មាន Secret Admin)";
-  return ctx.telegram.sendMessage(ctx.chat.id,
-    `👑 <b>Secret Admin List</b>\n\n${list}`, { parse_mode: "HTML" });
-});
-
-// /cancel
-bot.command("cancel", async ctx => {
-  const uid    = ctx.from.id;
-  const chatId = ctx.chat.id;
-  const sess   = user_sessions[uid];
-  if (sess) {
-    const { account_type, reserved_accounts = [] } = sess;
-    if (reserved_accounts.length && account_type) {
-      accounts_data.account_types[account_type] = [
-        ...reserved_accounts, ...(accounts_data.account_types[account_type] ?? [])];
-      saveAccounts();
-    }
-    for (const k of ["photo_message_id", "qr_message_id"]) {
-      if (sess[k]) deleteMsg(ctx, chatId, sess[k]).catch(() => {});
-    }
-    delete user_sessions[uid]; saveSessions();
-  }
-  await showAccountSelection(ctx, chatId);
-});
 
 // ── 18. Callback query handler ────────────────────────────────────────────────
 bot.on("callback_query", async ctx => {
@@ -945,6 +896,28 @@ async function dispatchAdminButton(ctx, chatId, uid, btn) {
       user_sessions[uid] = { state: "admin_input:admin_remove" }; saveSessions();
       return sendMsg(ctx, chatId, "➖ សូមផ្ញើ <b>Telegram User ID</b> ដែលចង់ដក:", CANCEL_INPUT_KB);
 
+    case BTN_SECRET_ADMINS: {
+      const sec = [...EXTRA_ADMIN_IDS].filter(x => x !== ADMIN_ID).sort();
+      const secStr = sec.length ? sec.map(x => `• <code>${x}</code>`).join("\n") : "(គ្មាន Secret Admin)";
+      return sendMsg(ctx, chatId,
+        `🕵️ <b>Secret Admin List</b>\n\n${secStr}`,
+        SECRET_ADMIN_SUBMENU_KB);
+    }
+
+    case BTN_SECRET_ADD:
+      user_sessions[uid] = { state: "admin_input:secret_add" }; saveSessions();
+      return sendMsg(ctx, chatId, "🕵️ សូមផ្ញើ <b>Telegram User ID</b> ដែលចង់ធ្វើជា Secret Admin:", CANCEL_INPUT_KB);
+
+    case BTN_SECRET_REMOVE:
+      user_sessions[uid] = { state: "admin_input:secret_remove" }; saveSessions();
+      return sendMsg(ctx, chatId, "➖ សូមផ្ញើ <b>Telegram User ID</b> ដែលចង់ដក Secret Admin:", CANCEL_INPUT_KB);
+
+    case BTN_SECRET_LIST: {
+      const sec2 = [...EXTRA_ADMIN_IDS].filter(x => x !== ADMIN_ID).sort();
+      const sec2Str = sec2.length ? sec2.map(x => `• <code>${x}</code>`).join("\n") : "(គ្មាន Secret Admin)";
+      return sendMsg(ctx, chatId, `🕵️ <b>Secret Admin List</b>\n\n${sec2Str}`, SECRET_ADMIN_SUBMENU_KB);
+    }
+
     case BTN_MAINTENANCE: {
       const status = MAINTENANCE_MODE ? "🔴 បិទ" : "🟢 បើក";
       return sendMsg(ctx, chatId, `🛠 <b>ស្ថានភាព Bot បច្ចុប្បន្ន៖</b> ${status}`, MAINTENANCE_SUBMENU_KB);
@@ -1028,6 +1001,25 @@ async function handleAdminInput(ctx, chatId, uid, msgId, key, text) {
     setSetting("EXTRA_ADMIN_IDS", JSON.stringify([...EXTRA_ADMIN_IDS]));
     delete user_sessions[uid]; saveSessions();
     return sendMsg(ctx, chatId, `✅ បានដក <code>${target}</code> ចាក admin`);
+  }
+
+  if (key === "secret_add") {
+    const target = parseInt(text, 10);
+    if (isNaN(target)) return sendMsg(ctx, chatId, "❌ user_id ត្រូវតែជាលេខ (ឬចុច 🚫 បោះបង់)");
+    if (target === ADMIN_ID) { delete user_sessions[uid]; saveSessions(); return sendMsg(ctx, chatId, "ℹ️ Admin បឋមមានសិទ្ធិស្រាប់ហើយ។", SECRET_ADMIN_SUBMENU_KB); }
+    EXTRA_ADMIN_IDS.add(target);
+    setSetting("EXTRA_ADMIN_IDS", JSON.stringify([...EXTRA_ADMIN_IDS]));
+    delete user_sessions[uid]; saveSessions();
+    return sendMsg(ctx, chatId, `✅ <code>${target}</code> ឥឡូវជា Secret Admin ហើយ`, SECRET_ADMIN_SUBMENU_KB);
+  }
+
+  if (key === "secret_remove") {
+    const target = parseInt(text, 10);
+    if (isNaN(target)) return sendMsg(ctx, chatId, "❌ user_id ត្រូវតែជាលេខ (ឬចុច 🚫 បោះបង់)");
+    EXTRA_ADMIN_IDS.delete(target);
+    setSetting("EXTRA_ADMIN_IDS", JSON.stringify([...EXTRA_ADMIN_IDS]));
+    delete user_sessions[uid]; saveSessions();
+    return sendMsg(ctx, chatId, `✅ បានដក <code>${target}</code> ចេញពី Secret Admin`, SECRET_ADMIN_SUBMENU_KB);
   }
 
   if (key === "broadcast") {
@@ -1202,11 +1194,12 @@ async function sendKhpayInfo(ctx, chatId) {
 
 // ── 25. Startup ───────────────────────────────────────────────────────────────
 function loadAll() {
-  settings       = readJSON(FILES.settings, {});
-  accounts_data  = readJSON(FILES.accounts, { accounts: [], account_types: {}, prices: {} });
-  known_users    = readJSON(FILES.users, {});
-  purchases      = readJSON(FILES.purchases, []);
-  const stored   = readJSON(FILES.sessions, {});
+  const db       = readDB();
+  settings       = db.settings   ?? {};
+  accounts_data  = db.accounts   ?? { accounts: [], account_types: {}, prices: {} };
+  known_users    = db.users      ?? {};
+  purchases      = db.purchases  ?? [];
+  const stored   = db.sessions   ?? {};
   for (const [k, v] of Object.entries(stored)) user_sessions[Number(k)] = v;
 
   // Restore settings
