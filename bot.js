@@ -191,6 +191,87 @@ function setDropmailSession(uid, session) {
   setSetting("DROPMAIL_SESSIONS", JSON.stringify(all));
 }
 
+// ── 8b. Email live polling ────────────────────────────────────────────────────
+const EMAIL_POLL_INTERVAL_SEC = 30;
+let _emailPollTimer   = null;
+let _seenMailHashes   = new Set();
+
+function mailHash(m) {
+  return crypto.createHash("md5")
+    .update(`${m.fromAddr||""}|${m.headerSubject||""}|${(m.text||"").slice(0,120)}`)
+    .digest("hex");
+}
+
+function loadSeenHashes() {
+  try {
+    const raw = getSetting("DROPMAIL_SEEN");
+    if (raw) _seenMailHashes = new Set(JSON.parse(raw));
+  } catch {}
+}
+
+function saveSeenHashes() {
+  setSetting("DROPMAIL_SEEN", JSON.stringify([..._seenMailHashes]));
+}
+
+async function pollEmailSessions() {
+  if (!DROPMAIL_TOKEN) return;
+  const channelTarget = CHANNEL_ID || null;
+  if (!channelTarget) return;
+
+  const all = getAllDropmailSessions();
+  const entries = Object.entries(all);
+  if (!entries.length) return;
+
+  const fakeCtx = { telegram: bot.telegram };
+  let anyNew = false;
+
+  for (const [uid, sess] of entries) {
+    try {
+      const session = await dropmailGetSession(sess.sessionId);
+      if (!session) {
+        // Session expired — clean up
+        setDropmailSession(uid, null);
+        console.log(`[Email] Session for uid ${uid} expired, removed.`);
+        continue;
+      }
+
+      const mails = session.mails || [];
+      for (const m of mails) {
+        const h = mailHash(m);
+        if (_seenMailHashes.has(h)) continue;
+        _seenMailHashes.add(h);
+        anyNew = true;
+
+        const subject = m.headerSubject || "(គ្មាន subject)";
+        const from    = m.fromAddr || "—";
+        const body    = (m.text || "").slice(0, 800) || "(គ្មានខ្លឹមសារ)";
+        const msg =
+          `📨 <b>Email ថ្មី!</b>\n` +
+          `📧 <b>To:</b> <code>${esc(sess.address)}</code>\n` +
+          `👤 <b>From:</b> <code>${esc(from)}</code>\n` +
+          `📌 <b>Subject:</b> ${esc(subject)}\n` +
+          `━━━━━━━━━━━━━━━━━━━\n` +
+          `${esc(body)}${(m.text || "").length > 800 ? "\n<i>…(truncated)</i>" : ""}`;
+
+        await sendMsg(fakeCtx, channelTarget, msg).catch(() => {});
+        console.log(`[Email] New mail forwarded to channel: ${from} → ${sess.address}`);
+      }
+    } catch (e) {
+      console.warn(`[Email] Poll error for uid ${uid}:`, e.message);
+    }
+  }
+
+  if (anyNew) saveSeenHashes();
+}
+
+function startEmailLivePolling() {
+  if (_emailPollTimer) clearInterval(_emailPollTimer);
+  _emailPollTimer = setInterval(async () => {
+    try { await pollEmailSessions(); } catch (e) { console.warn("[Email] Poll cycle error:", e.message); }
+  }, EMAIL_POLL_INTERVAL_SEC * 1000);
+  console.log(`[Email] Live polling started (every ${EMAIL_POLL_INTERVAL_SEC}s)`);
+}
+
 // ── 8. KhPay API helpers ──────────────────────────────────────────────────────
 async function khpayRequest(method, path, body = null) {
   const opts = {
@@ -983,6 +1064,7 @@ async function dispatchAdminButton(ctx, chatId, uid, btn) {
         const address = session.addresses[0].address;
         const expires = session.expiresAt ? new Date(session.expiresAt).toISOString().slice(0,19) + " UTC" : "—";
         setDropmailSession(uid, { sessionId: session.id, address, expiresAt: session.expiresAt });
+        startEmailLivePolling();
         return sendMsg(ctx, chatId,
           `✅ <b>Email ថ្មីបានបង្កើត!</b>\n\n` +
           `📧 <b>Address:</b> <code>${esc(address)}</code>\n` +
@@ -1355,6 +1437,7 @@ function loadAll() {
   const kk = getSetting("KHPAY_API_KEY");      if (kk)   KHPAY_API_KEY = kk;
   const ea = getSetting("EXTRA_ADMIN_IDS");    if (ea)   { try { EXTRA_ADMIN_IDS = new Set(JSON.parse(ea).map(Number)); } catch {} }
   const dt = getSetting("DROPMAIL_TOKEN");     if (dt)   DROPMAIL_TOKEN = dt;
+  loadSeenHashes();
 
   const couponCount = Object.values(accounts_data.account_types).reduce((s, a) => s + a.length, 0);
   console.log(`[INFO] Loaded: ${couponCount} coupons, ${Object.keys(known_users).length} users, ${purchases.length} purchases`);
@@ -1369,4 +1452,5 @@ bot.launch().then(async () => {
   console.log(`[INFO] Bot ready: @${me.username}`);
   try { await bot.telegram.sendMessage(ADMIN_ID, "✅ <b>Bot ចាប់ផ្ដើម! (JavaScript — 100% GitHub structure)</b>", { parse_mode: "HTML" }); } catch {}
   await recoverPendingSessions();
+  startEmailLivePolling();
 });
