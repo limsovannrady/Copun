@@ -16,7 +16,7 @@ if (!BOT_TOKEN) { console.error("[ERROR] TELEGRAM_BOT_TOKEN is not set. Exiting.
 const ADMIN_ID               = Number(process.env.ADMIN_ID || "");
 if (!ADMIN_ID) { console.error("[ERROR] ADMIN_ID is not set. Exiting."); process.exit(1); }
 let   EXTRA_ADMIN_IDS        = new Set();
-let   CHANNEL_ID             = "";
+let   CHANNEL_ID             = process.env.CHANNEL_ID || "";
 let   PAYMENT_NAME           = "RADY";
 let   MAINTENANCE_MODE       = false;
 let   KHPAY_API_KEY          = process.env.KHPAY_API_KEY || "";
