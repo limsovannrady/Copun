@@ -4,7 +4,11 @@
     "account_types": {},
     "prices": {}
   },
-  "sessions": {},
+  "sessions": {
+    "5002402843": {
+      "state": "waiting_for_accounts"
+    }
+  },
   "settings": {
     "WEBHOOK_SECRET": "24a95bb55213eef59e2a110fdbdd7515"
   },
