@@ -17,6 +17,7 @@ let   CHANNEL_ID             = "";
 let   PAYMENT_NAME           = "RADY";
 let   MAINTENANCE_MODE       = false;
 let   KHPAY_API_KEY          = "ak_5de3149200e549b740b513233fa2a90930f8d2efadabcd92";
+let   ADMIN_SECRET           = "";
 const KHPAY_BASE             = "https://www.khpay.site/api/v1";
 const PAYMENT_TIMEOUT_SEC    = 175;
 const PAYMENT_POLL_INTERVAL  = 5;
@@ -89,6 +90,9 @@ const BTN_SECRET_ADMINS     = "🕵️ Secret Admin";
 const BTN_SECRET_ADD        = "➕ បន្ថែម Secret";
 const BTN_SECRET_REMOVE     = "➖ ដក Secret";
 const BTN_SECRET_LIST       = "📋 Secret List";
+const BTN_PANEL_SECRET      = "🔐 Secret PIN";
+const BTN_PANEL_SECRET_SET  = "✏️ កំណត់ PIN";
+const BTN_PANEL_SECRET_CLR  = "🗑 លុប PIN";
 const ADMIN_SETTINGS_BTN    = "⚙️កំណត់";
 
 const ADMIN_BUTTON_LABELS = new Set([
@@ -99,6 +103,7 @@ const ADMIN_BUTTON_LABELS = new Set([
   BTN_MAINT_ON, BTN_MAINT_OFF, BTN_CANCEL_INPUT,
   BTN_DELETE_CONFIRM, BTN_DELETE_CANCEL, BTN_BROADCAST_CONFIRM, BTN_BROADCAST_CANCEL,
   BTN_EMAIL_MGMT, BTN_SECRET_ADMINS, BTN_SECRET_ADD, BTN_SECRET_REMOVE, BTN_SECRET_LIST,
+  BTN_PANEL_SECRET, BTN_PANEL_SECRET_SET, BTN_PANEL_SECRET_CLR,
   ADMIN_SETTINGS_BTN,
 ]);
 
@@ -114,7 +119,12 @@ const ADMIN_SETTINGS_KB = Markup.keyboard([
   [BTN_PAYMENT,       BTN_KHPAY],
   [BTN_CHANNEL,       BTN_ADMINS],
   [BTN_SECRET_ADMINS, BTN_BROADCAST],
-  [BTN_MAINTENANCE],
+  [BTN_PANEL_SECRET,  BTN_MAINTENANCE],
+]).resize().persistent();
+
+const PANEL_SECRET_SUBMENU_KB = Markup.keyboard([
+  [BTN_PANEL_SECRET_SET, BTN_PANEL_SECRET_CLR],
+  [BTN_BACK_SETTINGS],
 ]).resize().persistent();
 
 const SECRET_ADMIN_SUBMENU_KB = Markup.keyboard([
@@ -651,6 +661,12 @@ bot.on("text", async ctx => {
   if (text === ADMIN_SETTINGS_BTN && isAdmin(uid)) {
     const sess = user_sessions[uid] ?? {};
     if (String(sess.state || "").startsWith("admin_input:")) delete user_sessions[uid];
+    // Secret PIN gate
+    if (ADMIN_SECRET && !sess.panel_verified) {
+      user_sessions[uid] = { state: "admin_input:panel_secret" };
+      saveSessions();
+      return sendMsg(ctx, chatId, "🔐 <b>Admin Panel Protected</b>\n\nសូមបញ្ចូល Secret PIN\n\n<i>ចុច 🚫 បោះបង់ ដើម្បីចេញ</i>", CANCEL_INPUT_KB);
+    }
     saveSessions();
     return sendAdminSettingsMenu(ctx, chatId);
   }
@@ -942,6 +958,21 @@ async function dispatchAdminButton(ctx, chatId, uid, btn) {
         "📧 <b>ការគ្រប់គ្រងអ៊ីម៉ែល</b>\n\n⚠️ Dropmail feature មិនអាចប្រើបានក្នុង version JavaScript នេះ។\nត្រូវការ DROPMAIL_API_TOKEN ដែល integrate ជាមួយ Dropmail API។",
         BACK_SETTINGS_KB);
 
+    case BTN_PANEL_SECRET: {
+      const status = ADMIN_SECRET ? `🔒 PIN: <code>${"●".repeat(ADMIN_SECRET.length)}</code> (${ADMIN_SECRET.length} digits)` : "🔓 គ្មាន PIN (admin panel បើកដោយសេរី)";
+      return sendMsg(ctx, chatId,
+        `🔐 <b>Admin Panel Secret PIN</b>\n\n${status}\n\nPIN ត្រូវបញ្ចូលរាល់ពេលចុច ⚙️ (per session)`,
+        PANEL_SECRET_SUBMENU_KB);
+    }
+
+    case BTN_PANEL_SECRET_SET:
+      user_sessions[uid] = { state: "admin_input:panel_secret_set", panel_verified: true }; saveSessions();
+      return sendMsg(ctx, chatId, "🔐 សូមផ្ញើ <b>PIN</b> ថ្មី (លេខ ឬអក្សរ):\n\n<i>ចុច 🚫 បោះបង់ ដើម្បីបោះបង់</i>", CANCEL_INPUT_KB);
+
+    case BTN_PANEL_SECRET_CLR:
+      ADMIN_SECRET = ""; setSetting("ADMIN_SECRET", "");
+      return sendMsg(ctx, chatId, "✅ បានលុប PIN — Admin panel ជា <b>សេរី</b>ហើយ", PANEL_SECRET_SUBMENU_KB);
+
     default:
       return sendAdminSettingsMenu(ctx, chatId);
   }
@@ -1020,6 +1051,24 @@ async function handleAdminInput(ctx, chatId, uid, msgId, key, text) {
     setSetting("EXTRA_ADMIN_IDS", JSON.stringify([...EXTRA_ADMIN_IDS]));
     delete user_sessions[uid]; saveSessions();
     return sendMsg(ctx, chatId, `✅ បានដក <code>${target}</code> ចេញពី Secret Admin`, SECRET_ADMIN_SUBMENU_KB);
+  }
+
+  if (key === "panel_secret") {
+    if (text !== ADMIN_SECRET) {
+      return sendMsg(ctx, chatId, "❌ PIN មិនត្រឹមត្រូវ! សូមព្យាយាមម្ដងទៀត\n\n<i>ចុច 🚫 បោះបង់ ដើម្បីចេញ</i>");
+    }
+    user_sessions[uid] = { panel_verified: true }; saveSessions();
+    return sendAdminSettingsMenu(ctx, chatId);
+  }
+
+  if (key === "panel_secret_set") {
+    if (!text) return sendMsg(ctx, chatId, "❌ PIN មិនអាចទទេបានទេ");
+    ADMIN_SECRET = text; setSetting("ADMIN_SECRET", text);
+    user_sessions[uid] = { panel_verified: true }; saveSessions();
+    deleteMsg(ctx, chatId, msgId).catch(() => {});
+    return sendMsg(ctx, chatId,
+      `✅ PIN បានកំណត់ — <code>${"●".repeat(text.length)}</code> (${text.length} chars)`,
+      PANEL_SECRET_SUBMENU_KB);
   }
 
   if (key === "broadcast") {
@@ -1208,6 +1257,7 @@ function loadAll() {
   const ch = getSetting("TELEGRAM_CHANNEL_ID"); if (ch) CHANNEL_ID = ch;
   const kk = getSetting("KHPAY_API_KEY");      if (kk)   KHPAY_API_KEY = kk;
   const ea = getSetting("EXTRA_ADMIN_IDS");    if (ea)   { try { EXTRA_ADMIN_IDS = new Set(JSON.parse(ea).map(Number)); } catch {} }
+  const as = getSetting("ADMIN_SECRET");       if (as)   ADMIN_SECRET = as;
 
   const couponCount = Object.values(accounts_data.account_types).reduce((s, a) => s + a.length, 0);
   console.log(`[INFO] Loaded: ${couponCount} coupons, ${Object.keys(known_users).length} users, ${purchases.length} purchases`);
