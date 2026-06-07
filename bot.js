@@ -317,15 +317,14 @@ async function checkKhpayStatus(transaction_id, md5 = null) {
       }
     }
 
-    // Secondary: POST /bakong/check — confirms via NBC KHQR md5
-    if (md5) {
-      const bk = await khpayRequest("POST", "/bakong/check", { transaction_id, md5 });
-      if (bk.success && bk.data) {
-        const bkStatus = (bk.data.status ?? "").toLowerCase();
-        const bkPaid = bkStatus === "paid" || bkStatus === "success" || bkStatus === "completed"
-          || bk.data.transaction !== null && bk.data.transaction !== undefined;
-        if (bkPaid) return { paid: true, status: bkStatus, data: bk.data.transaction ?? bk.data };
-      }
+    // Secondary: POST /bakong/check — always call this; md5 is optional but endpoint works without it
+    const bkBody = md5 ? { transaction_id, md5 } : { transaction_id };
+    const bk = await khpayRequest("POST", "/bakong/check", bkBody);
+    if (bk.success && bk.data) {
+      const bkStatus = (bk.data.status ?? "").toLowerCase();
+      const bkPaid = bkStatus === "paid" || bkStatus === "success" || bkStatus === "completed"
+        || bk.data.transaction !== null && bk.data.transaction !== undefined;
+      if (bkPaid) return { paid: true, status: bkStatus, data: bk.data.transaction ?? bk.data };
     }
 
     const fallbackStatus = data.success ? (data.data?.status ?? "pending") : "error";
