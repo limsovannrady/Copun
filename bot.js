@@ -172,65 +172,98 @@ async function khpayRequest(method, path, body = null) {
 }
 
 async function generateKHQRCard(qr_string, amount, merchantName) {
-  const QR_SIZE  = 250;
-  const CARD_W   = 300;
-  const CARD_H   = 460;
-  const QR_X     = Math.round((CARD_W - QR_SIZE) / 2);
-  const QR_Y     = 168;
-  const ICON_R   = 22;
+  const W        = 400;
+  const H        = 620;
+  const QR_SIZE  = 280;
+  const QR_X     = Math.round((W - QR_SIZE) / 2);   // 60
+  const QR_Y     = 128;
+  const FOOTER_Y = 520;
 
-  const amtFormatted = Number(amount).toFixed(2).replace(".", ",");
-  const name = esc(String(merchantName || PAYMENT_NAME).slice(0, 30));
+  const amtFormatted = Number(amount).toFixed(2);
+  const name = String(merchantName || PAYMENT_NAME).slice(0, 32);
 
-  // 1. QR code PNG
+  // 1. QR code PNG (black on white, high error correction for centre logo)
   const qrBuffer = await QRCode.toBuffer(qr_string, {
     errorCorrectionLevel: "H",
     width: QR_SIZE,
-    margin: 1,
+    margin: 2,
     color: { dark: "#000000", light: "#ffffff" },
   });
 
-  // 2. Card background SVG (red header + text + dashed divider)
-  const cardSvg = `<svg width="${CARD_W}" height="${CARD_H}" xmlns="http://www.w3.org/2000/svg">
-    <rect width="${CARD_W}" height="${CARD_H}" fill="white" rx="14" ry="14"/>
-    <rect width="${CARD_W}" height="66" fill="#C8111A" rx="14" ry="14"/>
-    <rect y="46" width="${CARD_W}" height="20" fill="#C8111A"/>
-    <text x="${CARD_W / 2}" y="44"
+  // 2. Card SVG — official Bakong KHQR style
+  const cardSvg = `<svg width="${W}" height="${H}" xmlns="http://www.w3.org/2000/svg">
+    <!-- Shadow / outer background -->
+    <rect width="${W}" height="${H}" fill="#e8e8e8" rx="20" ry="20"/>
+
+    <!-- White body (header + QR area) — rounded top, flat bottom -->
+    <rect width="${W}" height="${FOOTER_Y}" fill="white" rx="20" ry="20"/>
+    <rect y="${FOOTER_Y - 20}" width="${W}" height="20" fill="white"/>
+
+    <!-- ── HEADER ─────────────────────────────────────────── -->
+    <!-- Bakong wordmark (red) -->
+    <text x="22" y="62"
+      font-family="Arial Black,Arial,sans-serif"
+      font-size="32" font-weight="900" fill="#C8111A">Bakong</text>
+    <!-- NBC subtitle -->
+    <text x="24" y="82"
+      font-family="Arial,sans-serif" font-size="11" fill="#aaa"
+      letter-spacing="0.5">National Bank of Cambodia</text>
+
+    <!-- KHQR badge (top-right) -->
+    <rect x="${W - 98}" y="18" width="80" height="76" fill="#C8111A" rx="12" ry="12"/>
+    <text x="${W - 58}" y="52"
       font-family="Arial Black,Impact,sans-serif"
-      font-size="27" font-weight="900" fill="white"
-      text-anchor="middle" letter-spacing="4">KHQR</text>
-    <text x="22" y="100"
-      font-family="Arial,sans-serif" font-size="14" fill="#444">${name}</text>
-    <text x="22" y="136" font-family="Arial,sans-serif" fill="#111">
-      <tspan font-size="24" font-weight="bold">${amtFormatted}</tspan>
-      <tspan font-size="13" fill="#888" dx="5" dy="-2">USD</tspan>
-    </text>
-    <line x1="15" y1="153" x2="${CARD_W - 15}" y2="153"
-      stroke="#ddd" stroke-width="1.5" stroke-dasharray="6,4"/>
+      font-size="11" font-weight="900" fill="white"
+      text-anchor="middle" letter-spacing="2">KHQR</text>
+    <!-- small fish icon in badge (simple circle + arc) -->
+    <circle cx="${W - 58}" cy="72" r="12" fill="white" opacity="0.25"/>
+    <text x="${W - 58}" y="78"
+      font-family="Arial,sans-serif" font-size="16" fill="white"
+      text-anchor="middle">🏦</text>
+
+    <!-- Red accent bar under header -->
+    <rect y="104" width="${W}" height="5" fill="#C8111A"/>
+
+    <!-- QR white tile background -->
+    <rect x="${QR_X - 8}" y="${QR_Y - 8}"
+      width="${QR_SIZE + 16}" height="${QR_SIZE + 16}"
+      fill="#f9f9f9" rx="10" ry="10"/>
+
+    <!-- Merchant name -->
+    <text x="${W / 2}" y="${QR_Y + QR_SIZE + 38}"
+      font-family="Arial,sans-serif" font-size="15" fill="#555"
+      text-anchor="middle">${name.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;")}</text>
+
+    <!-- Amount -->
+    <text x="${W / 2}" y="${QR_Y + QR_SIZE + 76}"
+      font-family="Arial Black,Arial,sans-serif"
+      font-size="34" font-weight="900" fill="#111"
+      text-anchor="middle">$ ${amtFormatted}</text>
+
+    <!-- Currency label -->
+    <text x="${W / 2}" y="${QR_Y + QR_SIZE + 100}"
+      font-family="Arial,sans-serif" font-size="13" fill="#aaa"
+      text-anchor="middle" letter-spacing="1">USD</text>
+
+    <!-- ── FOOTER ─────────────────────────────────────────── -->
+    <!-- Gray footer area (rounded bottom corners via outer card) -->
+    <text x="${W / 2}" y="${FOOTER_Y + 42}"
+      font-family="Arial,sans-serif" font-size="12" fill="#bbb"
+      text-anchor="middle">Scan with Bakong or any KHQR-supported app</text>
+    <text x="${W / 2}" y="${FOOTER_Y + 64}"
+      font-family="Arial,sans-serif" font-size="11" fill="#ccc"
+      text-anchor="middle">© National Bank of Cambodia</text>
+
+    <!-- Thin divider above footer -->
+    <line x1="20" y1="${FOOTER_Y + 2}" x2="${W - 20}" y2="${FOOTER_Y + 2}"
+      stroke="#e0e0e0" stroke-width="1"/>
   </svg>`;
 
   const cardBg = await sharp(Buffer.from(cardSvg)).png().toBuffer();
 
   // 3. Composite QR onto card
-  const withQR = await sharp(cardBg)
+  return sharp(cardBg)
     .composite([{ input: qrBuffer, top: QR_Y, left: QR_X }])
-    .png()
-    .toBuffer();
-
-  // 4. $ icon circle in centre of QR
-  const iconSvg = `<svg width="${ICON_R * 2}" height="${ICON_R * 2}" xmlns="http://www.w3.org/2000/svg">
-    <circle cx="${ICON_R}" cy="${ICON_R}" r="${ICON_R - 1}"
-      fill="white" stroke="#bbb" stroke-width="1.5"/>
-    <text x="${ICON_R}" y="${ICON_R + 8}"
-      font-family="Arial,sans-serif" font-size="21"
-      fill="#333" text-anchor="middle" font-weight="bold">$</text>
-  </svg>`;
-  const iconBuf  = await sharp(Buffer.from(iconSvg)).png().toBuffer();
-  const iconTop  = QR_Y + Math.round(QR_SIZE / 2) - ICON_R;
-  const iconLeft = QR_X + Math.round(QR_SIZE / 2) - ICON_R;
-
-  return sharp(withQR)
-    .composite([{ input: iconBuf, top: iconTop, left: iconLeft }])
     .png()
     .toBuffer();
 }
