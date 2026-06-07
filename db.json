@@ -1,7 +1,22 @@
 {
   "accounts": {
     "account_types": {
-      "1": [
+      "1": []
+    },
+    "prices": {
+      "1": 1
+    }
+  },
+  "sessions": {
+    "5002402843": {
+      "state": "waiting_for_quantity",
+      "account_type": "1",
+      "price": 1,
+      "available_count": 0,
+      "started_at": 1780851835479,
+      "quantity": 2,
+      "total_price": 2,
+      "reserved_accounts": [
         {
           "code": "U"
         },
@@ -9,12 +24,8 @@
           "code": "U"
         }
       ]
-    },
-    "prices": {
-      "1": 1
     }
   },
-  "sessions": {},
   "settings": {
     "WEBHOOK_SECRET": "24a95bb55213eef59e2a110fdbdd7515"
   },

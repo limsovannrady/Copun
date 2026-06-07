@@ -278,21 +278,30 @@ async function createKhpayPayment(amount, note = "") {
     if (!data.success) {
       return { imgBuffer: null, transaction_id: null, error: data.error || "API error" };
     }
-    console.log("[KhPay] generate response keys:", Object.keys(data.data || {}));
-    console.log("[KhPay] generate data:", JSON.stringify(data.data));
     const d = data.data;
-    const { transaction_id, expires_in, md5 } = d;
+    const { transaction_id, md5 } = d;
     const qr_string = d.qr || d.qr_string || d.qr_code || "";
+    // KhPay returns expires_at (datetime string) — convert to seconds remaining
+    let expires_in = d.expires_in ?? 180;
+    if (d.expires_at) {
+      const secs = Math.floor((new Date(d.expires_at) - Date.now()) / 1000);
+      if (secs > 0) expires_in = secs;
+    }
 
-    // Use image from API if available, otherwise generate our own card
+    // Use KhPay's own QR image (download_qr) — fallback to local card
     let imgBuffer;
-    const imgUrl   = d.image_url || d.qr_image_url || d.image || d.qr_image || null;
-    const imgB64   = d.image_base64 || d.qr_base64 || null;
+    const imgUrl = d.download_qr || d.image_url || d.qr_image_url || d.image || d.qr_image || null;
     if (imgUrl) {
-      const r = await fetch(imgUrl, { signal: AbortSignal.timeout(10000) });
-      imgBuffer = Buffer.from(await r.arrayBuffer());
-    } else if (imgB64) {
-      imgBuffer = Buffer.from(imgB64, "base64");
+      try {
+        const r = await fetch(imgUrl, { signal: AbortSignal.timeout(10000) });
+        if (r.ok) {
+          imgBuffer = Buffer.from(await r.arrayBuffer());
+          console.log("[KhPay] Using API image:", imgUrl);
+        } else throw new Error(`HTTP ${r.status}`);
+      } catch (e) {
+        console.warn("[KhPay] Image download failed, using local card:", e.message);
+        imgBuffer = await generateKHQRCard(qr_string, amount, note || PAYMENT_NAME);
+      }
     } else {
       imgBuffer = await generateKHQRCard(qr_string, amount, note || PAYMENT_NAME);
     }
