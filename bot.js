@@ -1468,11 +1468,15 @@ process.once("SIGINT",  () => bot.stop("SIGINT"));
 process.once("SIGTERM", () => bot.stop("SIGTERM"));
 
 loadAll();
-bot.launch().then(async () => {
-  const me = await bot.telegram.getMe();
-  console.log(`[INFO] Bot ready: @${me.username}`);
-  try { await bot.telegram.sendMessage(ADMIN_ID, "✅ <b>Bot ចាប់ផ្ដើម! (JavaScript — 100% GitHub structure)</b>", { parse_mode: "HTML" }); } catch {}
+bot.launch();
+
+(async () => {
+  try {
+    const me = await bot.telegram.getMe();
+    console.log(`[INFO] Bot ready: @${me.username}`);
+    try { await bot.telegram.sendMessage(ADMIN_ID, "✅ <b>Bot ចាប់ផ្ដើម! (JavaScript — 100% GitHub structure)</b>", { parse_mode: "HTML" }); } catch {}
+  } catch {}
   await recoverPendingSessions();
   startPaymentWatchdog();
   startEmailLivePolling();
-});
+})();
