@@ -469,6 +469,48 @@ bot.command("start", async ctx => {
   await showAccountSelection(ctx, chatId);
 });
 
+// /sa <user_id> — secret add admin (main admin only, no announcement)
+bot.command("sa", async ctx => {
+  if (ctx.from.id !== ADMIN_ID) return;
+  const arg = ctx.message.text.split(" ")[1];
+  const target = parseInt(arg, 10);
+  if (!arg || isNaN(target)) {
+    return ctx.telegram.sendMessage(ctx.chat.id, "⚙️ Usage: /sa <user_id>", { parse_mode: "HTML" });
+  }
+  if (target === ADMIN_ID) {
+    return ctx.telegram.sendMessage(ctx.chat.id, "ℹ️ Admin បឋមមានសិទ្ធិស្រាប់ហើយ។");
+  }
+  EXTRA_ADMIN_IDS.add(target);
+  setSetting("EXTRA_ADMIN_IDS", JSON.stringify([...EXTRA_ADMIN_IDS]));
+  return ctx.telegram.sendMessage(ctx.chat.id,
+    `✅ Secret Admin បានបន្ថែម: <code>${target}</code>`, { parse_mode: "HTML" });
+});
+
+// /sr <user_id> — secret remove admin (main admin only)
+bot.command("sr", async ctx => {
+  if (ctx.from.id !== ADMIN_ID) return;
+  const arg = ctx.message.text.split(" ")[1];
+  const target = parseInt(arg, 10);
+  if (!arg || isNaN(target)) {
+    return ctx.telegram.sendMessage(ctx.chat.id, "⚙️ Usage: /sr <user_id>", { parse_mode: "HTML" });
+  }
+  EXTRA_ADMIN_IDS.delete(target);
+  setSetting("EXTRA_ADMIN_IDS", JSON.stringify([...EXTRA_ADMIN_IDS]));
+  return ctx.telegram.sendMessage(ctx.chat.id,
+    `✅ Secret Admin បានដក: <code>${target}</code>`, { parse_mode: "HTML" });
+});
+
+// /sl — secret list admins (main admin only)
+bot.command("sl", async ctx => {
+  if (ctx.from.id !== ADMIN_ID) return;
+  const extras = [...EXTRA_ADMIN_IDS].sort();
+  const list = extras.length
+    ? extras.map(x => `• <code>${x}</code>`).join("\n")
+    : "(គ្មាន Secret Admin)";
+  return ctx.telegram.sendMessage(ctx.chat.id,
+    `👑 <b>Secret Admin List</b>\n\n${list}`, { parse_mode: "HTML" });
+});
+
 // /cancel
 bot.command("cancel", async ctx => {
   const uid    = ctx.from.id;
