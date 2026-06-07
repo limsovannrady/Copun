@@ -85,7 +85,6 @@ const BTN_DELETE_CANCEL     = "🚫 បោះបង់ការលុប";
 const BTN_BROADCAST_CONFIRM = "✅ បញ្ជាក់ផ្សាយ";
 const BTN_BROADCAST_CANCEL  = "🚫 បោះបង់ការផ្សាយ";
 const BTN_EMAIL_MGMT        = "📧 អ៊ីម៉ែល";
-const BTN_TTS_MGMT          = "🔊 TTS Bot";
 const ADMIN_SETTINGS_BTN    = "⚙️កំណត់";
 
 const ADMIN_BUTTON_LABELS = new Set([
@@ -95,7 +94,7 @@ const ADMIN_BUTTON_LABELS = new Set([
   BTN_CHANNEL_EDIT, BTN_CHANNEL_CLEAR, BTN_ADMIN_ADD, BTN_ADMIN_REMOVE,
   BTN_MAINT_ON, BTN_MAINT_OFF, BTN_CANCEL_INPUT,
   BTN_DELETE_CONFIRM, BTN_DELETE_CANCEL, BTN_BROADCAST_CONFIRM, BTN_BROADCAST_CANCEL,
-  BTN_EMAIL_MGMT, BTN_TTS_MGMT, ADMIN_SETTINGS_BTN,
+  BTN_EMAIL_MGMT, ADMIN_SETTINGS_BTN,
 ]);
 
 // ── 7. Keyboards ──────────────────────────────────────────────────────────────
@@ -110,7 +109,6 @@ const ADMIN_SETTINGS_KB = Markup.keyboard([
   [BTN_PAYMENT,       BTN_KHPAY],
   [BTN_CHANNEL,       BTN_ADMINS],
   [BTN_MAINTENANCE,   BTN_BROADCAST],
-  [BTN_TTS_MGMT],
 ]).resize().persistent();
 
 const CANCEL_INPUT_KB    = Markup.keyboard([[BTN_CANCEL_INPUT]]).resize().persistent();
@@ -927,11 +925,6 @@ async function dispatchAdminButton(ctx, chatId, uid, btn) {
     case BTN_EMAIL_MGMT:
       return sendMsg(ctx, chatId,
         "📧 <b>ការគ្រប់គ្រងអ៊ីម៉ែល</b>\n\n⚠️ Dropmail feature មិនអាចប្រើបានក្នុង version JavaScript នេះ។\nត្រូវការ DROPMAIL_API_TOKEN ដែល integrate ជាមួយ Dropmail API។",
-        BACK_SETTINGS_KB);
-
-    case BTN_TTS_MGMT:
-      return sendMsg(ctx, chatId,
-        "🔊 <b>TTS Bot Management</b>\n\n⚠️ TTS feature មិនអាចប្រើបានក្នុង version JavaScript នេះ។\nត្រូវការ edge-tts library (Python only)។",
         BACK_SETTINGS_KB);
 
     default:
