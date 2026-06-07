@@ -16,8 +16,8 @@
       "state": "payment_pending",
       "account_type": "1",
       "price": 1,
-      "available_count": 0,
-      "started_at": 1780852380676,
+      "available_count": 1,
+      "started_at": 1780852496303,
       "quantity": 1,
       "total_price": 1,
       "reserved_accounts": [
@@ -25,11 +25,11 @@
           "code": "U"
         }
       ],
-      "transaction_id": "bk_2ED1FEAFED8E8EDE",
-      "md5": "98e6107fad921ce32d1fc53792faf298",
-      "qr_sent_at": 1780852383879,
-      "photo_message_id": 1195,
-      "qr_message_id": 1195
+      "transaction_id": "bk_5B6C9E62F03C6FC8",
+      "md5": "4160e4e66357ad32b57e53aa399de5d2",
+      "qr_sent_at": 1780852499475,
+      "photo_message_id": 1209,
+      "qr_message_id": 1209
     }
   },
   "settings": {

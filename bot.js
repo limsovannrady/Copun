@@ -171,101 +171,13 @@ async function khpayRequest(method, path, body = null) {
   try { return JSON.parse(text); } catch { return { success: false, error: text }; }
 }
 
-async function generateKHQRCard(qr_string, amount, merchantName) {
-  const W        = 400;
-  const H        = 620;
-  const QR_SIZE  = 280;
-  const QR_X     = Math.round((W - QR_SIZE) / 2);   // 60
-  const QR_Y     = 128;
-  const FOOTER_Y = 520;
-
-  const amtFormatted = Number(amount).toFixed(2);
-  const name = String(merchantName || PAYMENT_NAME).slice(0, 32);
-
-  // 1. QR code PNG (black on white, high error correction for centre logo)
-  const qrBuffer = await QRCode.toBuffer(qr_string, {
-    errorCorrectionLevel: "H",
-    width: QR_SIZE,
-    margin: 2,
+async function generatePlainQR(qr_string) {
+  return QRCode.toBuffer(qr_string, {
+    errorCorrectionLevel: "M",
+    width: 400,
+    margin: 3,
     color: { dark: "#000000", light: "#ffffff" },
   });
-
-  // 2. Card SVG — official Bakong KHQR style
-  const cardSvg = `<svg width="${W}" height="${H}" xmlns="http://www.w3.org/2000/svg">
-    <!-- Shadow / outer background -->
-    <rect width="${W}" height="${H}" fill="#e8e8e8" rx="20" ry="20"/>
-
-    <!-- White body (header + QR area) — rounded top, flat bottom -->
-    <rect width="${W}" height="${FOOTER_Y}" fill="white" rx="20" ry="20"/>
-    <rect y="${FOOTER_Y - 20}" width="${W}" height="20" fill="white"/>
-
-    <!-- ── HEADER ─────────────────────────────────────────── -->
-    <!-- Bakong wordmark (red) -->
-    <text x="22" y="62"
-      font-family="Arial Black,Arial,sans-serif"
-      font-size="32" font-weight="900" fill="#C8111A">Bakong</text>
-    <!-- NBC subtitle -->
-    <text x="24" y="82"
-      font-family="Arial,sans-serif" font-size="11" fill="#aaa"
-      letter-spacing="0.5">National Bank of Cambodia</text>
-
-    <!-- KHQR badge (top-right) -->
-    <rect x="${W - 98}" y="18" width="80" height="76" fill="#C8111A" rx="12" ry="12"/>
-    <text x="${W - 58}" y="52"
-      font-family="Arial Black,Impact,sans-serif"
-      font-size="11" font-weight="900" fill="white"
-      text-anchor="middle" letter-spacing="2">KHQR</text>
-    <!-- small fish icon in badge (simple circle + arc) -->
-    <circle cx="${W - 58}" cy="72" r="12" fill="white" opacity="0.25"/>
-    <text x="${W - 58}" y="78"
-      font-family="Arial,sans-serif" font-size="16" fill="white"
-      text-anchor="middle">🏦</text>
-
-    <!-- Red accent bar under header -->
-    <rect y="104" width="${W}" height="5" fill="#C8111A"/>
-
-    <!-- QR white tile background -->
-    <rect x="${QR_X - 8}" y="${QR_Y - 8}"
-      width="${QR_SIZE + 16}" height="${QR_SIZE + 16}"
-      fill="#f9f9f9" rx="10" ry="10"/>
-
-    <!-- Merchant name -->
-    <text x="${W / 2}" y="${QR_Y + QR_SIZE + 38}"
-      font-family="Arial,sans-serif" font-size="15" fill="#555"
-      text-anchor="middle">${name.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;")}</text>
-
-    <!-- Amount -->
-    <text x="${W / 2}" y="${QR_Y + QR_SIZE + 76}"
-      font-family="Arial Black,Arial,sans-serif"
-      font-size="34" font-weight="900" fill="#111"
-      text-anchor="middle">$ ${amtFormatted}</text>
-
-    <!-- Currency label -->
-    <text x="${W / 2}" y="${QR_Y + QR_SIZE + 100}"
-      font-family="Arial,sans-serif" font-size="13" fill="#aaa"
-      text-anchor="middle" letter-spacing="1">USD</text>
-
-    <!-- ── FOOTER ─────────────────────────────────────────── -->
-    <!-- Gray footer area (rounded bottom corners via outer card) -->
-    <text x="${W / 2}" y="${FOOTER_Y + 42}"
-      font-family="Arial,sans-serif" font-size="12" fill="#bbb"
-      text-anchor="middle">Scan with Bakong or any KHQR-supported app</text>
-    <text x="${W / 2}" y="${FOOTER_Y + 64}"
-      font-family="Arial,sans-serif" font-size="11" fill="#ccc"
-      text-anchor="middle">© National Bank of Cambodia</text>
-
-    <!-- Thin divider above footer -->
-    <line x1="20" y1="${FOOTER_Y + 2}" x2="${W - 20}" y2="${FOOTER_Y + 2}"
-      stroke="#e0e0e0" stroke-width="1"/>
-  </svg>`;
-
-  const cardBg = await sharp(Buffer.from(cardSvg)).png().toBuffer();
-
-  // 3. Composite QR onto card
-  return sharp(cardBg)
-    .composite([{ input: qrBuffer, top: QR_Y, left: QR_X }])
-    .png()
-    .toBuffer();
 }
 
 async function createKhpayPayment(amount, note = "") {
@@ -288,7 +200,7 @@ async function createKhpayPayment(amount, note = "") {
       if (secs > 0) expires_in = secs;
     }
 
-    // Use KhPay's own QR image (download_qr) — fallback to local card
+    // Use KhPay's own QR image (download_qr) — fallback to plain QR
     let imgBuffer;
     const imgUrl = d.download_qr || d.image_url || d.qr_image_url || d.image || d.qr_image || null;
     if (imgUrl) {
@@ -299,11 +211,11 @@ async function createKhpayPayment(amount, note = "") {
           console.log("[KhPay] Using API image:", imgUrl);
         } else throw new Error(`HTTP ${r.status}`);
       } catch (e) {
-        console.warn("[KhPay] Image download failed, using local card:", e.message);
-        imgBuffer = await generateKHQRCard(qr_string, amount, note || PAYMENT_NAME);
+        console.warn("[KhPay] Image download failed, using plain QR:", e.message);
+        imgBuffer = await generatePlainQR(qr_string);
       }
     } else {
-      imgBuffer = await generateKHQRCard(qr_string, amount, note || PAYMENT_NAME);
+      imgBuffer = await generatePlainQR(qr_string);
     }
     return { imgBuffer, transaction_id, md5: md5 ?? null, expires_in: expires_in ?? 180, error: null };
   } catch (e) {
