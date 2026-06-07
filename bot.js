@@ -1348,6 +1348,51 @@ function loadAll() {
   console.log(`[INFO] Loaded: ${couponCount} coupons, ${Object.keys(known_users).length} users, ${purchases.length} purchases`);
 }
 
+// ── E-GetS channel monitor ────────────────────────────────────────────────────
+bot.on("channel_post", async ctx => {
+  try {
+    const text = ctx.channelPost?.text || "";
+    if (!text.includes("noreply@e-gets.com")) return;
+
+    // Extract email after "📧 ទៅ:"
+    const emailMatch = text.match(/📧\s*ទៅ\s*:\s*(\S+)/);
+    if (!emailMatch) return;
+    const email = emailMatch[1].trim();
+
+    // Extract verification code — standalone number (5-8 digits) on its own line
+    const codeMatch = text.match(/^\s*(\d{5,8})\s*$/m);
+    if (!codeMatch) return;
+    const code = codeMatch[1].trim();
+
+    // Find buyer who purchased this email
+    const matched = purchases.filter(p =>
+      (p.accounts || []).some(a => {
+        const val = (a.email || a.code || "").toLowerCase();
+        return val === email.toLowerCase();
+      })
+    );
+    if (!matched.length) {
+      console.log(`[EGets] Code ${code} for ${email} — no buyer found, skipping.`);
+      return;
+    }
+
+    // Send code to each buyer who got this email (deduplicate by user_id)
+    const sent = new Set();
+    for (const p of matched) {
+      const uid = p.user_id;
+      if (sent.has(uid)) continue;
+      sent.add(uid);
+      const msg = `📩 <b>លេខកូដផ្ទៀងផ្ទាត់ E-GetS</b>\n\n<code>${esc(email)}</code>\n\n<code>${code}</code>`;
+      await ctx.telegram.sendMessage(uid, msg, { parse_mode: "HTML" }).catch(e =>
+        console.warn(`[EGets] Cannot send to ${uid}:`, e.message)
+      );
+      console.log(`[EGets] Code ${code} sent to buyer ${uid} for ${email}`);
+    }
+  } catch (e) {
+    console.warn("[EGets] channel_post error:", e.message);
+  }
+});
+
 bot.catch((err, ctx) => {
   const desc = err?.response?.description ?? err?.message ?? String(err);
   if (desc.includes("query is too old") || desc.includes("query ID is invalid")) return;
