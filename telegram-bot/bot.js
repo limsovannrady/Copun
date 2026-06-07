@@ -7,62 +7,156 @@ import { Telegraf, Markup } from "telegraf";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
-// ── Config ────────────────────────────────────────────────────────────────────
-const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
-if (!BOT_TOKEN) {
-  console.error("[ERROR] TELEGRAM_BOT_TOKEN is not set. Exiting.");
-  process.exit(1);
-}
+// ── 1. Config ─────────────────────────────────────────────────────────────────
+const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || "";
+if (!BOT_TOKEN) { console.error("[ERROR] TELEGRAM_BOT_TOKEN is not set. Exiting."); process.exit(1); }
 
-const ADMIN_ID = 5002402843;
-const PAYMENT_TIMEOUT_SEC = 60;
-const PAYMENT_POLL_INTERVAL_SEC = 5;
+const ADMIN_ID               = 5002402843;
+let   EXTRA_ADMIN_IDS        = new Set();
+let   CHANNEL_ID             = "";
+let   PAYMENT_NAME           = "RADY";
+let   MAINTENANCE_MODE       = false;
+let   BAKONG_TOKEN           = "";
+let   BAKONG_API_TOKEN       = "";
+let   BAKONG_RELAY_TOKEN     = "";
+let   DROPMAIL_API_TOKEN     = "";
+let   DROPMAIL_TOKEN_EXPIRY  = "";
+const PAYMENT_TIMEOUT_SEC    = 60;
+const PAYMENT_POLL_INTERVAL  = 5;
 
-// ── Data directory ────────────────────────────────────────────────────────────
+// ── 2. Data directory ─────────────────────────────────────────────────────────
 const DATA_DIR = path.join(__dirname, "data");
 if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
 
 const FILES = {
-  accounts: path.join(DATA_DIR, "accounts.json"),
-  sessions: path.join(DATA_DIR, "sessions.json"),
-  settings: path.join(DATA_DIR, "settings.json"),
-  users:    path.join(DATA_DIR, "users.json"),
+  accounts:  path.join(DATA_DIR, "accounts.json"),
+  sessions:  path.join(DATA_DIR, "sessions.json"),
+  settings:  path.join(DATA_DIR, "settings.json"),
+  users:     path.join(DATA_DIR, "users.json"),
   purchases: path.join(DATA_DIR, "purchases.json"),
 };
 
-// ── In-memory state ───────────────────────────────────────────────────────────
-let accounts  = { account_types: {}, prices: {} };
-let sessions  = {};   // { [userId]: sessionObj }
-let settings  = {};
-let users     = {};   // { [userId]: { first_name, last_name, username } }
-let purchases = [];
-const notifiedUsers = new Set();
+// ── 3. In-memory state ────────────────────────────────────────────────────────
+let accounts_data  = { accounts: [], account_types: {}, prices: {} };
+let user_sessions  = {};
+let settings       = {};
+let known_users    = {};
+let purchases      = [];
+const _notified    = new Set();
 
-// ── JSON helpers ──────────────────────────────────────────────────────────────
-function readJSON(file, fallback) {
-  try { return JSON.parse(fs.readFileSync(file, "utf8")); }
-  catch { return fallback; }
-}
-function writeJSON(file, data) {
-  try { fs.writeFileSync(file, JSON.stringify(data, null, 2), "utf8"); }
-  catch (e) { console.error(`[WARN] writeJSON ${file}: ${e.message}`); }
-}
-const saveAccounts  = () => writeJSON(FILES.accounts, accounts);
-const saveSessions  = () => writeJSON(FILES.sessions, sessions);
+// ── 4. JSON persistence ───────────────────────────────────────────────────────
+const readJSON  = (f, fb) => { try { return JSON.parse(fs.readFileSync(f, "utf8")); } catch { return fb; } };
+const writeJSON = (f, d) => { try { fs.writeFileSync(f, JSON.stringify(d, null, 2), "utf8"); } catch(e) { console.warn("[WARN]", e.message); } };
+
+const saveAccounts  = () => writeJSON(FILES.accounts, accounts_data);
+const saveSessions  = () => writeJSON(FILES.sessions, user_sessions);
 const saveSettings  = () => writeJSON(FILES.settings, settings);
-const saveUsers     = () => writeJSON(FILES.users, users);
+const saveUsers     = () => writeJSON(FILES.users, known_users);
 const savePurchases = () => writeJSON(FILES.purchases, purchases);
 
-function getSetting(key, def = null) { return settings[key] ?? def; }
-function setSetting(key, value) { settings[key] = value; saveSettings(); }
+const getSetting = (k, def = null) => settings[k] ?? def;
+const setSetting = (k, v) => { settings[k] = v; saveSettings(); };
 
-// ── KHQR helpers ──────────────────────────────────────────────────────────────
-function crc16(str) {
+// ── 5. Admin helpers ──────────────────────────────────────────────────────────
+const isAdmin = uid => Number(uid) === ADMIN_ID || EXTRA_ADMIN_IDS.has(Number(uid));
+
+// ── 6. Button labels (100% identical to GitHub) ───────────────────────────────
+const BTN_ADD_ACCOUNT       = "➕ បន្ថែម គូប៉ុង";
+const BTN_DELETE_TYPE       = "🗑 លុបប្រភេទ";
+const BTN_STOCK             = "📦 ស្តុក គូប៉ុង";
+const BTN_USERS             = "👥 អ្នកប្រើប្រាស់";
+const BTN_BUYERS            = "📋 របាយការណ៍ទិញ";
+const BTN_PAYMENT           = "💳 ឈ្មោះ Payment";
+const BTN_BAKONG            = "🔑 Bakong Token";
+const BTN_CHANNEL           = "📢 Channel ID";
+const BTN_ADMINS            = "👑 គ្រប់គ្រង Admin";
+const BTN_MAINTENANCE       = "🛠 Maintenance Mode";
+const BTN_BROADCAST         = "📢 ផ្សាយព័ត៌មាន";
+const BTN_BACK_SETTINGS     = "⬅️ ត្រឡប់ទៅកំណត់";
+const BTN_PAYMENT_EDIT      = "✏️ ប្តូរឈ្មោះ Payment";
+const BTN_BAKONG_API_EDIT   = "✏️ ប្តូរ Bakong Token";
+const BTN_BAKONG_TOKEN_INFO = "📅 ព័ត៌មាន Token";
+const BTN_CHANNEL_EDIT      = "✏️ ប្តូរ Channel ID";
+const BTN_CHANNEL_CLEAR     = "🗑 លុប Channel ID";
+const BTN_ADMIN_ADD         = "➕ បន្ថែម Admin";
+const BTN_ADMIN_REMOVE      = "➖ ដក Admin";
+const BTN_MAINT_ON          = "🔴 បិទ Bot";
+const BTN_MAINT_OFF         = "🟢 បើក Bot";
+const BTN_CANCEL_INPUT      = "🚫 បោះបង់";
+const BTN_DELETE_CONFIRM    = "✅ បញ្ជាក់លុប";
+const BTN_DELETE_CANCEL     = "🚫 បោះបង់ការលុប";
+const BTN_BROADCAST_CONFIRM = "✅ បញ្ជាក់ផ្សាយ";
+const BTN_BROADCAST_CANCEL  = "🚫 បោះបង់ការផ្សាយ";
+const BTN_EMAIL_MGMT        = "📧 អ៊ីម៉ែល";
+const BTN_TTS_MGMT          = "🔊 TTS Bot";
+const ADMIN_SETTINGS_BTN    = "⚙️កំណត់";
+
+const ADMIN_BUTTON_LABELS = new Set([
+  BTN_ADD_ACCOUNT, BTN_DELETE_TYPE, BTN_STOCK, BTN_USERS, BTN_BUYERS,
+  BTN_PAYMENT, BTN_BAKONG, BTN_CHANNEL, BTN_ADMINS, BTN_MAINTENANCE, BTN_BROADCAST,
+  BTN_BACK_SETTINGS, BTN_PAYMENT_EDIT, BTN_BAKONG_API_EDIT, BTN_BAKONG_TOKEN_INFO,
+  BTN_CHANNEL_EDIT, BTN_CHANNEL_CLEAR, BTN_ADMIN_ADD, BTN_ADMIN_REMOVE,
+  BTN_MAINT_ON, BTN_MAINT_OFF, BTN_CANCEL_INPUT,
+  BTN_DELETE_CONFIRM, BTN_DELETE_CANCEL, BTN_BROADCAST_CONFIRM, BTN_BROADCAST_CANCEL,
+  BTN_EMAIL_MGMT, BTN_TTS_MGMT, ADMIN_SETTINGS_BTN,
+]);
+
+// ── 7. Keyboards ──────────────────────────────────────────────────────────────
+const MAIN_KB = Markup.keyboard([["💵 ទិញគូប៉ុង"]]).resize().persistent();
+
+const ADMIN_KB = Markup.keyboard([[ADMIN_SETTINGS_BTN]]).resize().persistent();
+
+const ADMIN_SETTINGS_KB = Markup.keyboard([
+  [BTN_ADD_ACCOUNT,   BTN_DELETE_TYPE],
+  [BTN_STOCK,         BTN_BUYERS],
+  [BTN_USERS,         BTN_EMAIL_MGMT],
+  [BTN_PAYMENT,       BTN_BAKONG],
+  [BTN_CHANNEL,       BTN_ADMINS],
+  [BTN_MAINTENANCE,   BTN_BROADCAST],
+  [BTN_TTS_MGMT],
+]).resize().persistent();
+
+const CANCEL_INPUT_KB    = Markup.keyboard([[BTN_CANCEL_INPUT]]).resize().persistent();
+const ADD_ACCOUNT_KB     = Markup.keyboard([[BTN_BACK_SETTINGS]]).resize().persistent();
+const BACK_SETTINGS_KB   = Markup.keyboard([[BTN_BACK_SETTINGS]]).resize().persistent();
+
+const PAYMENT_SUBMENU_KB = Markup.keyboard([
+  [BTN_PAYMENT_EDIT], [BTN_BACK_SETTINGS],
+]).resize().persistent();
+
+const BAKONG_SUBMENU_KB = Markup.keyboard([
+  [BTN_BAKONG_API_EDIT, BTN_BAKONG_TOKEN_INFO], [BTN_BACK_SETTINGS],
+]).resize().persistent();
+
+const CHANNEL_SUBMENU_KB = Markup.keyboard([
+  [BTN_CHANNEL_EDIT, BTN_CHANNEL_CLEAR], [BTN_BACK_SETTINGS],
+]).resize().persistent();
+
+const ADMINS_SUBMENU_KB = Markup.keyboard([
+  [BTN_ADMIN_ADD, BTN_ADMIN_REMOVE], [BTN_BACK_SETTINGS],
+]).resize().persistent();
+
+const MAINTENANCE_SUBMENU_KB = Markup.keyboard([
+  [BTN_MAINT_ON, BTN_MAINT_OFF], [BTN_BACK_SETTINGS],
+]).resize().persistent();
+
+const BROADCAST_CONFIRM_KB = Markup.keyboard([
+  [BTN_BROADCAST_CONFIRM], [BTN_BROADCAST_CANCEL],
+]).resize().persistent();
+
+const CHECK_PAYMENT_INLINE = Markup.inlineKeyboard([
+  [Markup.button.callback("🚫 បោះបង់", "cancel_purchase")],
+]);
+
+const mainKb = uid => isAdmin(uid) ? ADMIN_KB : Markup.removeKeyboard();
+
+// ── 8. KHQR helpers (100% identical logic to GitHub) ─────────────────────────
+function crc16(data) {
   let crc = 0xffff;
-  for (const ch of Buffer.from(str, "utf8")) {
-    crc ^= ch << 8;
+  for (const ch of data) {
+    crc ^= ch.charCodeAt(0) << 8;
     for (let i = 0; i < 8; i++)
-      crc = crc & 0x8000 ? ((crc << 1) ^ 0x1021) & 0xffff : (crc << 1) & 0xffff;
+      crc = (crc & 0x8000) ? ((crc << 1) ^ 0x1021) & 0xffff : (crc << 1) & 0xffff;
   }
   return crc.toString(16).toUpperCase().padStart(4, "0");
 }
@@ -71,813 +165,1064 @@ function tlv(tag, value) {
   return `${tag}${String(value.length).padStart(2, "0")}${value}`;
 }
 
-function buildKHQR(bankAccount, merchantName, amount) {
-  const name = merchantName.replace(/[^A-Za-z0-9 ]/g, "").substring(0, 25).toUpperCase() || "MERCHANT";
-  const city = "PHNOMPENH";
-  const merchantInfo = tlv("00", "com.bakong.nbc.gov.kh") + tlv("01", bankAccount);
-  const payload =
-    tlv("00", "01") +
-    tlv("01", "12") +
-    tlv("26", merchantInfo) +
-    tlv("52", "5999") +
-    tlv("53", "840") +
-    tlv("54", amount.toFixed(2)) +
-    tlv("58", "KH") +
-    tlv("59", name) +
-    tlv("60", city) +
-    "6304";
-  return payload + crc16(payload);
+function buildKHQRManual(bankAccount, merchantName, merchantCity, amount, billNumber, phone, storeLabel, terminalLabel) {
+  const phoneLocal = phone.startsWith("855") ? "0" + phone.slice(3) : phone.slice(-9);
+  const addData = tlv("03", storeLabel) + tlv("02", phoneLocal) + tlv("01", billNumber) + tlv("07", terminalLabel);
+  const nowMs  = String(Date.now());
+  const expMs  = String(Date.now() + 86400000);
+  const infoData = tlv("00", nowMs) + tlv("01", expMs);
+  const body = (
+    tlv("00", "01") + tlv("01", "12") +
+    tlv("29", tlv("00", bankAccount)) +
+    tlv("52", "5999") + tlv("53", "840") +
+    tlv("54", amount.toFixed(2)) + tlv("58", "KH") +
+    tlv("59", merchantName) + tlv("60", merchantCity) +
+    tlv("62", addData) + tlv("99", infoData) + "6304"
+  );
+  return body + crc16(body);
 }
 
 async function generatePaymentQR(amount) {
-  const bankAccount = getSetting("BANK_ACCOUNT", "12345678@abanka");
-  const payName     = getSetting("PAYMENT_NAME", "RADY");
-  const qrString    = buildKHQR(bankAccount, payName, amount);
-  const md5         = crypto.createHash("md5").update(qrString).digest("hex");
+  const bankAccount  = getSetting("BANK_ACCOUNT", "sovannrady@aclb");
+  const payName      = PAYMENT_NAME;
+  const billNumber   = `TRX${Date.now()}`;
+  const phone        = "85593330905";
+  const storeLabel   = payName;
+  const terminalLabel = "Cashier-01";
+  const city         = "KPS";
+
+  // Build KHQR string (manual, identical to GitHub _build_khqr_manual)
+  const qrString = buildKHQRManual(bankAccount, payName, city, amount, billNumber, phone, storeLabel, terminalLabel);
+  const md5 = crypto.createHash("md5").update(qrString).digest("hex");
+
   try {
-    const imgBuffer = await QRCode.toBuffer(qrString, {
-      errorCorrectionLevel: "M",
-      width: 400,
-      margin: 2,
-    });
+    const imgBuffer = await QRCode.toBuffer(qrString, { errorCorrectionLevel: "M", width: 400, margin: 2 });
     return { imgBuffer, md5, qrString, error: null };
   } catch (e) {
-    return { imgBuffer: null, md5: null, qrString, error: e.message };
+    // Fallback: try api.qrserver.com
+    try {
+      const res = await fetch(`https://api.qrserver.com/v1/create-qr-code/?size=400x400&data=${encodeURIComponent(qrString)}`, { signal: AbortSignal.timeout(10000) });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const ab = await res.arrayBuffer();
+      return { imgBuffer: Buffer.from(ab), md5, qrString, error: null };
+    } catch (e2) {
+      return { imgBuffer: null, md5: null, qrString, error: e2.message };
+    }
   }
 }
 
 async function checkPaymentStatus(md5) {
-  const tok = getSetting("BAKONG_TOKEN", process.env.BAKONG_TOKEN || "");
-  if (!tok) return { paid: false, data: null };
-  const base = tok.startsWith("rbk")
-    ? "https://api.bakongrelay.com/v1"
-    : "https://api-bakong.nbc.gov.kh/v1";
-  try {
-    const res = await fetch(`${base}/check_transaction_by_md5`, {
-      method: "POST",
-      headers: { Authorization: `Bearer ${tok}`, "Content-Type": "application/json" },
-      body: JSON.stringify({ md5 }),
-    });
-    const json = await res.json();
-    if (json.responseCode === 0) return { paid: true, data: json.data ?? null };
-  } catch (e) {
-    console.warn(`[WARN] Payment check: ${e.message}`);
+  const tokens = [];
+  if (BAKONG_RELAY_TOKEN) tokens.push(BAKONG_RELAY_TOKEN);
+  if (BAKONG_API_TOKEN && !tokens.includes(BAKONG_API_TOKEN)) tokens.push(BAKONG_API_TOKEN);
+  if (!tokens.length && BAKONG_TOKEN) tokens.push(BAKONG_TOKEN);
+  for (const tok of tokens) {
+    try {
+      const base = tok.startsWith("rbk") ? "https://api.bakongrelay.com/v1" : "https://api-bakong.nbc.gov.kh/v1";
+      const res  = await fetch(`${base}/check_transaction_by_md5`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${tok}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ md5 }),
+        signal: AbortSignal.timeout(10000),
+      });
+      const data = await res.json();
+      if (data.responseCode === 0) return { paid: true, data: data.data ?? null };
+    } catch (e) { console.warn("[WARN] check_payment:", e.message); }
   }
   return { paid: false, data: null };
 }
 
-// ── Admin / state helpers ─────────────────────────────────────────────────────
-function isAdmin(uid) {
-  const extra = getSetting("EXTRA_ADMIN_IDS", []);
-  return Number(uid) === ADMIN_ID || extra.map(Number).includes(Number(uid));
+// ── 9. Account type helpers ───────────────────────────────────────────────────
+const typeCallbackId  = at => crypto.createHash("sha1").update(at).digest("hex").slice(0, 12);
+const typeFromCbId    = cid => Object.keys(accounts_data.account_types).find(t => typeCallbackId(t) === cid) ?? null;
+const shortLabel      = (t, n = 36) => { const c = t.trim(); return c.length <= n ? c : c.slice(0, n - 1) + "…"; };
+
+// ── 10. HTML escape ───────────────────────────────────────────────────────────
+const esc = s => String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+
+// ── 11. JWT expiry decoder ────────────────────────────────────────────────────
+function decodeJWTExpiry(token) {
+  try {
+    const parts = token.split(".");
+    if (parts.length !== 3) return { exp: null, daysLeft: null };
+    const payload = JSON.parse(Buffer.from(parts[1].replace(/-/g,"+").replace(/_/g,"/"), "base64").toString("utf8"));
+    if (!payload.exp) return { exp: null, daysLeft: null };
+    const expDate  = new Date(payload.exp * 1000);
+    const daysLeft = Math.floor((expDate - Date.now()) / 86400000);
+    return { exp: expDate, daysLeft };
+  } catch { return { exp: null, daysLeft: null }; }
 }
 
-function typeCallbackId(accountType) {
-  return crypto.createHash("sha1").update(accountType).digest("hex").slice(0, 12);
+function daysStatus(daysLeft) {
+  if (daysLeft == null)    return "✅ Active";
+  if (daysLeft < 0)        return `❌ ផុតកំណត់រួចហើយ (${Math.abs(daysLeft)} ថ្ងៃមុន)`;
+  if (daysLeft === 0)      return "⚠️ ផុតកំណត់ថ្ងៃនេះ!";
+  if (daysLeft <= 7)       return `⚠️ នឹងផុតក្នុង ${daysLeft} ថ្ងៃ`;
+  return `✅ នៅសល់ ${daysLeft} ថ្ងៃ`;
 }
 
-function typeFromCallbackId(cid) {
-  return Object.keys(accounts.account_types).find((t) => typeCallbackId(t) === cid) ?? null;
+// ── 12. Account format helper ─────────────────────────────────────────────────
+function formatAccount(acc) {
+  if (typeof acc === "string") return acc;
+  if (acc.email)  return acc.email;
+  if (acc.phone)  return `${acc.phone} | ${acc.password || ""}`;
+  if (acc.code)   return acc.code;
+  return JSON.stringify(acc);
 }
 
-function mainKb(uid) {
-  return isAdmin(uid)
-    ? Markup.keyboard([["⚙️ ការកំណត់"]]).resize().persistent()
-    : Markup.removeKeyboard();
-}
-
-function maintenanceMode() {
-  return Boolean(getSetting("MAINTENANCE_MODE", false));
-}
-
-// ── Keyboards ─────────────────────────────────────────────────────────────────
-const ADMIN_SETTINGS_KB = Markup.keyboard([
-  ["➕ បន្ថែម គូប៉ុង",  "🗑 លុបប្រភេទ"],
-  ["📦 ស្តុក គូប៉ុង",    "📋 របាយការណ៍ទិញ"],
-  ["👥 អ្នកប្រើប្រាស់",  "💳 ឈ្មោះ Payment"],
-  ["🔑 Bakong Token",    "👑 គ្រប់គ្រង Admin"],
-  ["🛠 Maintenance Mode","📢 ផ្សាយព័ត៌មាន"],
-]).resize().persistent();
-
-const CANCEL_KB = Markup.keyboard([["🚫 បោះបង់"]]).resize();
-const BACK_KB   = Markup.keyboard([["⬅️ ត្រឡប់"]]).resize();
-
-const CANCEL_PURCHASE_INLINE = Markup.inlineKeyboard([
-  Markup.button.callback("🚫 បោះបង់", "cancel_purchase"),
-]);
-
-const ADMIN_BTN_SET = new Set([
-  "➕ បន្ថែម គូប៉ុង","🗑 លុបប្រភេទ","📦 ស្តុក គូប៉ុង","📋 របាយការណ៍ទិញ",
-  "👥 អ្នកប្រើប្រាស់","💳 ឈ្មោះ Payment","🔑 Bakong Token","👑 គ្រប់គ្រង Admin",
-  "🛠 Maintenance Mode","📢 ផ្សាយព័ត៌មាន","⬅️ ត្រឡប់","🚫 បោះបង់",
-  "✅ បញ្ជាក់លុប","🚫 បោះបង់ការលុប","✅ បញ្ជាក់ផ្សាយ","🚫 បោះបង់ការផ្សាយ",
-  "🔴 បិទ Bot","🟢 បើក Bot","➕ Add Admin","➖ Remove Admin",
-]);
-
-// ── Send helpers ──────────────────────────────────────────────────────────────
+// ── 13. Send helpers ──────────────────────────────────────────────────────────
 async function sendMsg(ctx, chatId, text, extra = {}) {
-  try {
-    return await ctx.telegram.sendMessage(chatId, text, {
-      parse_mode: "HTML", ...extra,
-    });
-  } catch (e) {
-    console.warn(`[WARN] sendMsg(${chatId}): ${e.message}`);
-  }
+  try { return await ctx.telegram.sendMessage(chatId, text, { parse_mode: "HTML", ...extra }); }
+  catch (e) { console.warn(`[WARN] sendMsg(${chatId}):`, e.message); }
 }
-
-async function sendPhoto(ctx, chatId, buffer, caption = "", extra = {}) {
-  try {
-    return await ctx.telegram.sendPhoto(chatId, { source: buffer }, {
-      caption, parse_mode: "HTML", ...extra,
-    });
-  } catch (e) {
-    console.warn(`[WARN] sendPhoto(${chatId}): ${e.message}`);
-  }
+async function sendPhoto(ctx, chatId, buffer, extra = {}) {
+  try { return await ctx.telegram.sendPhoto(chatId, { source: buffer }, { parse_mode: "HTML", ...extra }); }
+  catch (e) { console.warn(`[WARN] sendPhoto(${chatId}):`, e.message); }
 }
-
+async function sendDocument(ctx, chatId, buffer, filename, caption = "") {
+  try { return await ctx.telegram.sendDocument(chatId, { source: buffer, filename }, { caption, parse_mode: "HTML" }); }
+  catch (e) { console.warn(`[WARN] sendDocument(${chatId}):`, e.message); }
+}
 async function deleteMsg(ctx, chatId, messageId) {
+  if (!messageId) return;
   try { await ctx.telegram.deleteMessage(chatId, messageId); } catch {}
 }
+async function editMsgReplyMarkup(ctx, chatId, messageId, markup) {
+  try { await ctx.telegram.editMessageReplyMarkup(chatId, messageId, null, markup?.reply_markup ?? markup); } catch {}
+}
 
-// ── Notify admin of new user ──────────────────────────────────────────────────
+// ── 14. Admin notifications ───────────────────────────────────────────────────
 async function notifyAdminNewUser(ctx, user) {
   const uid = user.id;
-  if (uid === ADMIN_ID || notifiedUsers.has(uid) || users[uid]) return;
-  notifiedUsers.add(uid);
-  users[String(uid)] = {
+  if (uid === ADMIN_ID || _notified.has(uid) || known_users[String(uid)]) return;
+  _notified.add(uid);
+  known_users[String(uid)] = {
     first_name: user.first_name || "",
     last_name:  user.last_name  || "",
     username:   user.username   || "",
+    first_seen: new Date().toISOString(),
   };
   saveUsers();
   const full  = [user.first_name, user.last_name].filter(Boolean).join(" ") || "N/A";
   const uname = user.username ? `@${user.username}` : "—";
   await sendMsg(ctx, ADMIN_ID,
-    `🆕 <b>អ្នកប្រើប្រាស់ថ្មី!</b>\n\n` +
-    `👤 ឈ្មោះ: ${esc(full)}\n` +
-    `🔖 Username: ${esc(uname)}\n` +
-    `🪪 ID: <code>${uid}</code>`);
+    `🆕 <b>អ្នកប្រើប្រាស់ថ្មី!</b>\n\n👤 ឈ្មោះ: ${esc(full)}\n🔖 Username: ${esc(uname)}\n🪪 ID: <code>${uid}</code>`);
 }
 
-function esc(s) {
-  return String(s)
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;");
-}
-
-// ── Show account selection ────────────────────────────────────────────────────
-async function showAccountSelection(ctx, chatId, uid) {
-  const available = Object.entries(accounts.account_types)
-    .filter(([, accs]) => accs.length > 0)
-    .map(([at, accs]) => ({ at, count: accs.length, price: accounts.prices[at] ?? 0 }));
+// ── 15. Account selection ─────────────────────────────────────────────────────
+async function showAccountSelection(ctx, chatId) {
+  const available = Object.entries(accounts_data.account_types)
+    .filter(([, v]) => v.length > 0)
+    .map(([at, v]) => ({ at, count: v.length }));
 
   if (!available.length) {
-    await sendMsg(ctx, chatId, "😔 <i>សូមអភ័យទោស អស់ពីស្តុក</i>", mainKb(uid));
+    await sendMsg(ctx, chatId, "<i>សូមអភ័យទោស អស់ពីស្តុក 🪤</i>");
     return;
   }
-
-  const buttons = available.map(({ at, count, price }) =>
-    [Markup.button.callback(
-      `${at}  [ $${price.toFixed(2)} ]  ស្តុក: ${count}`,
-      `buy:${typeCallbackId(at)}`
-    )]
+  const rows = available.map(({ at, count }) =>
+    [Markup.button.callback(`${at} – មានក្នុងស្តុក ${count}`, `buy:${typeCallbackId(at)}`)]
   );
-  await sendMsg(ctx, chatId, "<b>🛒 ជ្រើសរើសគូប៉ុងដើម្បីទិញ៖</b>",
-    Markup.inlineKeyboard(buttons));
+  await sendMsg(ctx, chatId, "<b>សូមជ្រើសរើសគូប៉ុងដើម្បីទិញ៖</b>",
+    Markup.inlineKeyboard(rows));
 }
 
-async function showAdminMenu(ctx, chatId) {
+async function sendAdminSettingsMenu(ctx, chatId) {
   await sendMsg(ctx, chatId,
-    "<b>⚙️ ការកំណត់ Admin</b>\n\nជ្រើសរើសប្រតិបត្តិការ:",
+    "<b>⚙️ ការកំណត់ Admin</b>\n\nសូមជ្រើសរើសប្រតិបត្តិការខាងក្រោម៖",
     ADMIN_SETTINGS_KB);
 }
 
-// ── Payment flow ──────────────────────────────────────────────────────────────
-async function startPayment(ctx, chatId, uid, sess, cbQuery = null) {
-  const { account_type, quantity } = sess;
-  const pool = accounts.account_types[account_type] ?? [];
+// ── 16. Payment flow ──────────────────────────────────────────────────────────
+async function startPaymentForSession(ctx, chatId, userId, session, cbQuery = null) {
+  const { account_type, quantity } = session;
+  const pool = accounts_data.account_types[account_type] ?? [];
 
   if (pool.length < quantity) {
-    if (cbQuery) await cbQuery.answerCbQuery(`មានត្រឹមតែ ${pool.length} គូប៉ុងប៉ុណ្ណោះ`, { show_alert: true });
-    delete sessions[uid]; saveSessions();
+    if (cbQuery) { try { await cbQuery.answerCbQuery(`សូមអភ័យទោស! មានត្រឹមតែ ${pool.length} គូប៉ុង នៅក្នុងស្តុក`, { show_alert: true }); } catch {} }
+    delete user_sessions[userId]; saveSessions();
     return false;
   }
 
   const reserved = pool.slice(0, quantity);
-  accounts.account_types[account_type] = pool.slice(quantity);
-  sess.reserved_accounts = reserved;
+  accounts_data.account_types[account_type] = pool.slice(quantity);
+  session.reserved_accounts = reserved;
+  session.available_count   = accounts_data.account_types[account_type].length;
   saveAccounts();
 
-  if (cbQuery) { try { await cbQuery.answerCbQuery("កំពុងបង្កើត QR…"); } catch {} }
+  if (cbQuery) { try { await cbQuery.answerCbQuery("កំពុងបង្កើត QR..."); } catch {} }
+  session.state = "payment_pending";
 
-  sess.state = "payment_pending";
-  const { imgBuffer, md5, error } = await generatePaymentQR(sess.total_price);
+  const { imgBuffer, md5, error } = await generatePaymentQR(session.total_price);
 
   if (!imgBuffer) {
-    await sendMsg(ctx, chatId, "❌ <b>មានបញ្ហាក្នុងការបង្កើត QR Code</b>\n\nសូមព្យាយាមម្ដងទៀត។");
-    await sendMsg(ctx, ADMIN_ID, `⚠️ QR Error (user ${uid}): <code>${esc(String(error))}</code>`);
-    accounts.account_types[account_type] = [...reserved, ...accounts.account_types[account_type]];
+    if (isAdmin(userId)) {
+      await sendMsg(ctx, chatId, `❌ <b>QR បរាជ័យ (Admin Debug):</b>\n<code>${esc(String(error))}</code>`);
+    } else {
+      await sendMsg(ctx, chatId, "❌ <b>មានបញ្ហាក្នុងការបង្កើត QR Code</b>\n\nសូមព្យាយាមម្ដងទៀត។");
+      await sendMsg(ctx, ADMIN_ID, `⚠️ QR Error (user ${userId}): <code>${esc(String(error))}</code>`);
+    }
+    accounts_data.account_types[account_type] = [...reserved, ...(accounts_data.account_types[account_type] ?? [])];
     saveAccounts();
-    delete sessions[uid]; saveSessions();
+    delete user_sessions[userId]; saveSessions();
     return false;
   }
 
-  sess.md5_hash   = md5;
-  sess.qr_sent_at = Date.now();
+  session.md5_hash   = md5;
+  session.qr_sent_at = Date.now();
 
-  const caption =
-    `💳 <b>ការទូទាត់ KHQR</b>\n\n` +
-    `🛒 <b>${esc(account_type)}</b> × ${quantity}\n` +
-    `💵 <b>$${sess.total_price.toFixed(2)}</b>\n\n` +
-    `⏱ QR Code មានសុពលភាព ${PAYMENT_TIMEOUT_SEC} វិនាទី\n` +
-    `👆 ស្កែន QR ហើយទូទាត់ភ្លាមៗ`;
+  const photoMsg = await sendPhoto(ctx, chatId, imgBuffer, { ...CHECK_PAYMENT_INLINE });
+  if (photoMsg) {
+    session.photo_message_id = photoMsg.message_id;
+    session.qr_message_id    = photoMsg.message_id;
+  }
 
-  const photoMsg = await sendPhoto(ctx, chatId, imgBuffer, caption, CANCEL_PURCHASE_INLINE);
-  if (photoMsg) sess.photo_message_id = photoMsg.message_id;
-
-  sessions[uid] = sess;
+  user_sessions[userId] = session;
   saveSessions();
 
-  // Start polling
-  pollPayment(ctx, chatId, uid, md5, sess);
+  // Start polling loop
+  scheduleQRExpiry(ctx, chatId, userId, md5, session.qr_sent_at);
+  console.log(`[INFO] Generated QR for user ${userId}: Amount $${session.total_price}, MD5: ${md5}`);
   return true;
 }
 
-function pollPayment(ctx, chatId, uid, md5, sess) {
-  const deadline = sess.qr_sent_at + PAYMENT_TIMEOUT_SEC * 1000;
+function scheduleQRExpiry(ctx, chatId, userId, md5, startedAt) {
+  const deadline = startedAt + PAYMENT_TIMEOUT_SEC * 1000;
 
-  const timer = setInterval(async () => {
-    const cur = sessions[uid];
-    if (!cur || cur.state !== "payment_pending" || cur.md5_hash !== md5) {
-      clearInterval(timer);
-      return;
+  const interval = setInterval(async () => {
+    const sess = user_sessions[userId];
+    if (!sess || sess.state !== "payment_pending" || sess.md5_hash !== md5) {
+      clearInterval(interval); return;
     }
 
-    if (Date.now() > deadline) {
-      clearInterval(timer);
-      await expirePayment(ctx, chatId, uid, cur);
-      return;
-    }
-
-    const { paid, data } = await checkPaymentStatus(md5);
-    if (paid) {
-      clearInterval(timer);
-      await deliverAccounts(ctx, chatId, uid, cur, data);
-    }
-  }, PAYMENT_POLL_INTERVAL_SEC * 1000);
-}
-
-async function expirePayment(ctx, chatId, uid, sess) {
-  const { account_type, reserved_accounts = [] } = sess;
-  if (reserved_accounts.length && account_type) {
-    accounts.account_types[account_type] = [
-      ...reserved_accounts,
-      ...(accounts.account_types[account_type] ?? []),
-    ];
-    saveAccounts();
-  }
-  if (sess.photo_message_id) await deleteMsg(ctx, chatId, sess.photo_message_id);
-  delete sessions[uid]; saveSessions();
-  await sendMsg(ctx, chatId,
-    "⏰ <b>QR Code ផុតកំណត់</b>\n\nការទូទាត់មិនបានទទួលក្នុងពេលវេលា។ " +
-    "ចុច /start ដើម្បីចាប់ផ្ដើមឡើងវិញ។",
-    mainKb(uid));
-}
-
-async function deliverAccounts(ctx, chatId, uid, sess, paymentData = null) {
-  delete sessions[uid]; saveSessions();
-
-  const { reserved_accounts = [], account_type = "", quantity = 1, total_price = 0 } = sess;
-
-  purchases.push({
-    user_id: uid,
-    account_type,
-    quantity,
-    total_price,
-    delivered: reserved_accounts,
-    paid_at: new Date().toISOString(),
-  });
-  savePurchases();
-
-  const lines = [
-    `✅ <b>ការទូទាត់ជោគជ័យ!</b>\n`,
-    `🛒 <b>${esc(account_type)}</b> × ${quantity}`,
-    `💵 បានទូទាត់: <b>$${total_price.toFixed(2)}</b>\n`,
-    "━━━━━━━━━━━━━━━━━━━━━",
-    "<b>🎫 គូប៉ុងរបស់អ្នក:</b>\n",
-    ...reserved_accounts.map((a, i) => `${i + 1}. <code>${esc(a.code ?? a.email ?? JSON.stringify(a))}</code>`),
-    "\n━━━━━━━━━━━━━━━━━━━━━",
-    "🙏 <b>សូមអរគុណ!</b> ចុច /start ដើម្បីទិញបន្ថែម",
-  ];
-
-  if (sess.photo_message_id) await deleteMsg(ctx, chatId, sess.photo_message_id);
-  await sendMsg(ctx, chatId, lines.join("\n"), mainKb(uid));
-  await sendMsg(ctx, ADMIN_ID,
-    `💰 <b>ការលក់ថ្មី!</b>\n` +
-    `👤 User: <code>${uid}</code>\n` +
-    `🛒 ${esc(account_type)} × ${quantity}\n` +
-    `💵 $${total_price.toFixed(2)}`);
-}
-
-// ── Bot setup ─────────────────────────────────────────────────────────────────
-const bot = new Telegraf(BOT_TOKEN);
-
-// /start
-bot.command("start", async (ctx) => {
-  const uid     = ctx.from.id;
-  const chatId  = ctx.chat.id;
-  notifyAdminNewUser(ctx, ctx.from).catch(() => {});
-
-  if (maintenanceMode() && !isAdmin(uid)) {
-    return sendMsg(ctx, chatId, "🔧 <b>Bot កំពុង Update សូមរង់ចាំមួយភ្លែត…</b>");
-  }
-  const sess = sessions[uid];
-  if (sess?.state === "payment_pending") {
-    return sendMsg(ctx, chatId,
-      "⏳ <b>អ្នកមានការបញ្ជាទិញកំពុងដំណើរការ។</b>\n" +
-      "ចុច /cancel ដើម្បីបោះបង់ ឬបញ្ចប់ការទូទាត់ជាមុនសិន។");
-  }
-  delete sessions[uid];
-  await showAccountSelection(ctx, chatId, uid);
-});
-
-// /cancel
-bot.command("cancel", async (ctx) => {
-  const uid    = ctx.from.id;
-  const chatId = ctx.chat.id;
-  const sess   = sessions[uid];
-  if (sess) {
-    const { account_type, reserved_accounts = [] } = sess;
-    if (reserved_accounts.length && account_type) {
-      accounts.account_types[account_type] = [
-        ...reserved_accounts,
-        ...(accounts.account_types[account_type] ?? []),
-      ];
-      saveAccounts();
-    }
-    if (sess.photo_message_id) await deleteMsg(ctx, chatId, sess.photo_message_id);
-    delete sessions[uid]; saveSessions();
-  }
-  await sendMsg(ctx, chatId, "🚫 <b>បានបោះបង់</b>", mainKb(uid));
-  await showAccountSelection(ctx, chatId, uid);
-});
-
-// ── Callback queries ──────────────────────────────────────────────────────────
-bot.on("callback_query", async (ctx) => {
-  const data   = ctx.callbackQuery.data ?? "";
-  const uid    = ctx.from.id;
-  const chatId = ctx.callbackQuery.message?.chat?.id ?? ctx.chat.id;
-
-  if (data === "cancel_purchase") {
-    await ctx.answerCbQuery("បោះបង់…");
-    // re-use cancel logic
-    const sess = sessions[uid];
-    if (sess) {
-      const { account_type, reserved_accounts = [] } = sess;
-      if (reserved_accounts.length && account_type) {
-        accounts.account_types[account_type] = [
-          ...reserved_accounts,
-          ...(accounts.account_types[account_type] ?? []),
-        ];
+    const now = Date.now();
+    if (now >= deadline) {
+      clearInterval(interval);
+      // Expired
+      await deleteMsg(ctx, chatId, sess.photo_message_id);
+      const reserved = sess.reserved_accounts ?? [];
+      if (reserved.length && sess.account_type) {
+        accounts_data.account_types[sess.account_type] = [...reserved, ...(accounts_data.account_types[sess.account_type] ?? [])];
         saveAccounts();
       }
-      if (sess.photo_message_id) await deleteMsg(ctx, chatId, sess.photo_message_id);
-      delete sessions[uid]; saveSessions();
+      delete user_sessions[userId]; saveSessions();
+      await sendMsg(ctx, chatId, "⌛ <b>QR Code បានផុតកំណត់</b>\n\nសូមបង្កើតការទិញម្ដងទៀត។");
+      await showAccountSelection(ctx, chatId);
+      return;
     }
-    await sendMsg(ctx, chatId, "🚫 <b>បានបោះបង់</b>", mainKb(uid));
-    await showAccountSelection(ctx, chatId, uid);
+
+    // Check payment
+    const { paid, data: payData } = await checkPaymentStatus(md5);
+    if (paid) {
+      clearInterval(interval);
+      const cur = user_sessions[userId];
+      if (cur && cur.md5_hash === md5) await deliverAccounts(ctx, chatId, userId, cur, payData);
+    }
+  }, PAYMENT_POLL_INTERVAL * 1000);
+}
+
+async function deliverAccounts(ctx, chatId, userId, session, paymentData = null) {
+  const { account_type, quantity } = session;
+  let reserved = session.reserved_accounts ?? [];
+
+  // Delete QR photo
+  for (const k of ["photo_message_id", "qr_message_id"]) {
+    if (session[k]) deleteMsg(ctx, chatId, session[k]).catch(() => {});
+  }
+
+  let delivered = null;
+  if (reserved.length >= quantity) {
+    delivered = reserved.slice(0, quantity);
+  } else if ((accounts_data.account_types[account_type] ?? []).length >= quantity) {
+    const pool = accounts_data.account_types[account_type];
+    delivered  = pool.slice(0, quantity);
+    accounts_data.account_types[account_type] = pool.slice(quantity);
+    saveAccounts();
+  }
+
+  delete user_sessions[userId]; saveSessions();
+
+  if (!delivered) {
+    await sendMsg(ctx, chatId, `❌ <b>មានបញ្ហា!</b>\n\nគ្មាន គូប៉ុង ប្រភេទ ${esc(account_type)} ក្នុងស្តុក។`);
     return;
   }
 
-  if (data.startsWith("buy:")) {
-    const sess = sessions[uid];
-    if (sess?.state === "payment_pending") {
-      return ctx.answerCbQuery("អ្នកមានការបញ្ជាទិញដែលកំពុងដំណើរការ", { show_alert: true });
-    }
-    const at = typeFromCallbackId(data.slice(4));
-    if (!at) return ctx.answerCbQuery("ប្រភេទនេះអស់ស្តុករួចហើយ", { show_alert: true });
+  // Save purchase history
+  purchases.push({
+    user_id: userId, account_type, quantity,
+    total_price: session.total_price, accounts: delivered,
+    purchased_at: new Date().toISOString(),
+  });
+  savePurchases();
 
-    const price = accounts.prices[at] ?? 0;
-    sessions[uid] = { state: "waiting_for_quantity", account_type: at, price };
-    saveSessions();
-    await ctx.answerCbQuery();
+  // Build delivery message (100% identical format to GitHub)
+  let msg = `<tg-emoji emoji-id="5436040291507247633">🎉</tg-emoji> <b>ការទិញបានបញ្ជាក់ដោយជោគជ័យ</b>\n\n`;
+  msg += `<blockquote>🔹 ប្រភេទ: ${esc(account_type)}\n🔹 ចំនួន: ${quantity}</blockquote>\n\n`;
+  msg += `<b>គូប៉ុង របស់អ្នក៖</b>\n\n`;
+  for (const acc of delivered) {
+    msg += `${esc(formatAccount(acc))}\n`;
+  }
+  msg += `\n<i>សូមអរគុណសម្រាប់ការទិញ <tg-emoji emoji-id="5897474556834091884">🙏</tg-emoji></i>`;
+
+  await sendMsg(ctx, chatId, msg, mainKb(userId));
+
+  // Admin notification
+  try {
+    const pd  = paymentData || {};
+    const now = new Date().toLocaleString("en-GB", { timeZone: "Asia/Phnom_Penh", hour12: false });
+    const fromAcc = pd.fromAccountId || pd.hash || "N/A";
+    const memo    = pd.memo || "គ្មាន";
+    const ref     = pd.externalRef || pd.transactionId || pd.md5 || "N/A";
+    const adminMsg = (
+      "🎉 <b>ទទួលបានការបង់ប្រាក់ជោគជ័យ</b>\n" +
+      "━━━━━━━━━━━━━━━━━━━\n" +
+      `🆔 <b>ឈ្មោះអ្នកទិញ(ID):</b> ${userId}\n` +
+      `💵 <b>ទឹកប្រាក់:</b> ${session.total_price} USD\n` +
+      `👤 <b>ពីធនាគារ:</b> <code>${esc(fromAcc)}</code>\n` +
+      `📝 <b>ចំណាំ:</b> ${esc(memo)}\n` +
+      `🧾 <b>លេខយោង:</b> <code>${esc(ref)}</code>\n` +
+      `⏰ <b>ម៉ោង:</b> ${now}`
+    );
+    await sendMsg(ctx, ADMIN_ID, adminMsg);
+    if (CHANNEL_ID && String(CHANNEL_ID) !== String(ADMIN_ID)) {
+      await sendMsg(ctx, CHANNEL_ID, adminMsg).catch(() => {});
+    }
+  } catch (e) { console.warn("[WARN] admin payment notify:", e.message); }
+
+  console.log(`[INFO] Payment confirmed and ${quantity} accounts delivered to user ${userId}`);
+}
+
+// ── 17. Bot setup ─────────────────────────────────────────────────────────────
+const bot = new Telegraf(BOT_TOKEN);
+
+// /start
+bot.command("start", async ctx => {
+  const uid    = ctx.from.id;
+  const chatId = ctx.chat.id;
+  notifyAdminNewUser(ctx, ctx.from).catch(() => {});
+  if (MAINTENANCE_MODE && !isAdmin(uid)) {
+    return sendMsg(ctx, chatId, "🔧 <b>Bot កំពុង Update សូមរង់ចាំមួយភ្លែត...</b>");
+  }
+  const sess = user_sessions[uid];
+  if (sess?.state === "payment_pending") {
     return sendMsg(ctx, chatId,
-      `🛒 <b>${esc(at)}</b>\n💵 តម្លៃ: <b>$${price.toFixed(2)}</b> / គ្រាប់\n\n` +
-      `✏️ <b>សូមបញ្ចូលចំនួនដែលចង់ទិញ:</b>`,
-      CANCEL_KB);
+      "⏳ <b>សូមបញ្ចប់ការទិញបច្ចុប្បន្នជាមុនសិន</b>\n\nអ្នកមានការបញ្ជាទិញមួយកំពុងដំណើរការ។ " +
+      "សូមបញ្ចប់ការទូទាត់ ឬចុច /cancel មុននឹងចាប់ផ្តើមការទិញថ្មី។");
+  }
+  delete user_sessions[uid];
+  await showAccountSelection(ctx, chatId);
+});
+
+// /cancel
+bot.command("cancel", async ctx => {
+  const uid    = ctx.from.id;
+  const chatId = ctx.chat.id;
+  const sess   = user_sessions[uid];
+  if (sess) {
+    const { account_type, reserved_accounts = [] } = sess;
+    if (reserved_accounts.length && account_type) {
+      accounts_data.account_types[account_type] = [
+        ...reserved_accounts, ...(accounts_data.account_types[account_type] ?? [])];
+      saveAccounts();
+    }
+    for (const k of ["photo_message_id", "qr_message_id"]) {
+      if (sess[k]) deleteMsg(ctx, chatId, sess[k]).catch(() => {});
+    }
+    delete user_sessions[uid]; saveSessions();
+  }
+  await showAccountSelection(ctx, chatId);
+});
+
+// ── 18. Callback query handler ────────────────────────────────────────────────
+bot.on("callback_query", async ctx => {
+  const data   = ctx.callbackQuery.data ?? "";
+  const uid    = ctx.from.id;
+  const chatId = ctx.callbackQuery.message?.chat?.id ?? ctx.chat?.id;
+
+  notifyAdminNewUser(ctx, ctx.from).catch(() => {});
+
+  // ── buy:<id> ─────────────────────────────────────────────────────────────
+  if (data.startsWith("buy:")) {
+    const at = typeFromCbId(data.slice(4));
+    if (!at) return ctx.answerCbQuery("ប្រភេទនេះមិនមានទៀតហើយ។", { show_alert: true });
+    const sess = user_sessions[uid];
+    if (sess?.state === "payment_pending") return ctx.answerCbQuery("សូមបញ្ចប់ការទិញបច្ចុប្បន្នជាមុនសិន", { show_alert: true });
+
+    await ctx.answerCbQuery();
+    const pool  = accounts_data.account_types[at] ?? [];
+    const price = accounts_data.prices[at] ?? 0;
+    if (pool.length <= 0) {
+      return sendMsg(ctx, chatId, `<i>សូមអភ័យទោស គូប៉ុង ${esc(at)} អស់ពីស្តុក 🪤</i>`);
+    }
+
+    // Clear old session
+    const old = user_sessions[uid];
+    if (old?.reserved_accounts?.length && old.account_type) {
+      accounts_data.account_types[old.account_type] = [...(old.reserved_accounts), ...(accounts_data.account_types[old.account_type] ?? [])];
+      saveAccounts();
+    }
+
+    user_sessions[uid] = { state: "waiting_for_quantity", account_type: at, price, available_count: pool.length, started_at: Date.now() };
+    saveSessions();
+
+    const typeCbId  = typeCallbackId(at);
+    const qtyBtns   = Array.from({ length: Math.min(pool.length, 25) }, (_, i) =>
+      Markup.button.callback(String(i + 1), `qty:${typeCbId}:${i + 1}`)
+    );
+    const rows = [];
+    for (let i = 0; i < qtyBtns.length; i += 5) rows.push(qtyBtns.slice(i, i + 5));
+    rows.push([Markup.button.callback("🚫 បោះបង់", "cancel_buy")]);
+
+    await sendMsg(ctx, chatId, "<b>សូមជ្រើសរើសចំនួនដែលចង់ទិញ៖</b>", Markup.inlineKeyboard(rows));
+    deleteMsg(ctx, chatId, ctx.callbackQuery.message.message_id).catch(() => {});
+    return;
   }
 
-  if (data.startsWith("confirm_buy:")) {
-    const qty  = parseInt(data.slice("confirm_buy:".length), 10);
-    const sess = sessions[uid] ?? {};
-    const at    = sess.account_type;
-    const price = sess.price ?? 0;
-    if (!at || isNaN(qty) || qty < 1) return ctx.answerCbQuery("ចំនួនមិនត្រឹមត្រូវ", { show_alert: true });
+  // ── qty:<typeid>:<n> ──────────────────────────────────────────────────────
+  if (data.startsWith("qty:")) {
+    const parts = data.split(":");
+    let   at    = null, qty = null;
+    if (parts.length === 3) { at = typeFromCbId(parts[1]); qty = parseInt(parts[2], 10); }
+    else if (parts.length === 2) { qty = parseInt(parts[1], 10); }
+
+    if (!qty || qty < 1) return ctx.answerCbQuery();
+
+    const sess = user_sessions[uid];
+    if (!sess || sess.state !== "waiting_for_quantity") return ctx.answerCbQuery();
+    if (at && sess.account_type !== at) return ctx.answerCbQuery("ប្រភេទផ្លាស់ប្ដូរ — ចាប់ផ្ដើមម្ដងទៀត", { show_alert: true });
+    if (qty > sess.available_count) return ctx.answerCbQuery(`សុំទោស! មានត្រឹមតែ ${sess.available_count} នៅក្នុងស្តុក`, { show_alert: true });
 
     sess.quantity    = qty;
-    sess.total_price = Math.round(price * qty * 100) / 100;
-    sessions[uid]    = sess;
+    sess.total_price = Math.round(qty * sess.price * 100) / 100;
+    deleteMsg(ctx, chatId, ctx.callbackQuery.message.message_id).catch(() => {});
+    await startPaymentForSession(ctx, chatId, uid, sess, ctx);
+    return;
+  }
+
+  // ── cancel_buy ────────────────────────────────────────────────────────────
+  if (data === "cancel_buy") {
     await ctx.answerCbQuery();
-    await startPayment(ctx, chatId, uid, sess, ctx);
+    const sess = user_sessions[uid];
+    if (sess?.reserved_accounts?.length && sess.account_type) {
+      accounts_data.account_types[sess.account_type] = [...sess.reserved_accounts, ...(accounts_data.account_types[sess.account_type] ?? [])];
+      saveAccounts();
+    }
+    delete user_sessions[uid]; saveSessions();
+    deleteMsg(ctx, chatId, ctx.callbackQuery.message.message_id).catch(() => {});
+    await showAccountSelection(ctx, chatId);
+    return;
+  }
+
+  // ── cancel_purchase ───────────────────────────────────────────────────────
+  if (data === "cancel_purchase") {
+    const sess = user_sessions[uid];
+    const md5  = sess?.md5_hash;
+    // Check if actually paid first (smart cancel, identical to GitHub)
+    if (md5) {
+      try {
+        const { paid, data: pd } = await checkPaymentStatus(md5);
+        if (paid) {
+          await ctx.answerCbQuery("✅ បានទទួលការបង់ប្រាក់!");
+          await deliverAccounts(ctx, chatId, uid, sess, pd);
+          return;
+        }
+      } catch {}
+    }
+    await ctx.answerCbQuery();
+    if (sess) {
+      const { account_type, reserved_accounts = [] } = sess;
+      if (reserved_accounts.length && account_type) {
+        accounts_data.account_types[account_type] = [...reserved_accounts, ...(accounts_data.account_types[account_type] ?? [])];
+        saveAccounts();
+      }
+      for (const k of ["photo_message_id", "qr_message_id"]) {
+        if (sess[k]) deleteMsg(ctx, chatId, sess[k]).catch(() => {});
+      }
+      delete user_sessions[uid]; saveSessions();
+    }
+    await showAccountSelection(ctx, chatId);
+    return;
+  }
+
+  // ── Admin: dts: (delete type select) ─────────────────────────────────────
+  if (data.startsWith("dts:") && isAdmin(uid)) {
+    const typeName = typeFromCbId(data.slice(4)) || data.slice(4);
+    if (!accounts_data.account_types[typeName]) return ctx.answerCbQuery("ប្រភេទនេះមិនមានទៀតហើយ!", { show_alert: true });
+    await ctx.answerCbQuery();
+    const count = accounts_data.account_types[typeName].length;
+    const price = accounts_data.prices[typeName] ?? 0;
+    await sendMsg(ctx, chatId,
+      `⚠️ <b>តើអ្នកពិតជាចង់លុបប្រភេទ គូប៉ុង នេះមែនទេ?</b>\n\n` +
+      `<blockquote>🔹 ប្រភេទ: ${esc(typeName)}\n🔹 ចំនួន: ${count}\n🔹 តម្លៃ: $${price}</blockquote>`,
+      Markup.inlineKeyboard([[
+        Markup.button.callback("✅ បញ្ជាក់លុប", `dtc:${typeCallbackId(typeName)}`),
+        Markup.button.callback("🚫 បោះបង់", "dtcancel"),
+      ]]));
+    return;
+  }
+
+  // ── Admin: dtc: (delete type confirm) ────────────────────────────────────
+  if (data.startsWith("dtc:") && isAdmin(uid)) {
+    const typeName = typeFromCbId(data.slice(4)) || data.slice(4);
+    if (!accounts_data.account_types[typeName]) return ctx.answerCbQuery("ប្រភេទនេះមិនមានទៀតហើយ!", { show_alert: true });
+    await ctx.answerCbQuery();
+    const count = (accounts_data.account_types[typeName] ?? []).length;
+    delete accounts_data.account_types[typeName];
+    delete accounts_data.prices[typeName];
+    accounts_data.accounts = (accounts_data.accounts || []).filter(a => a.type !== typeName);
+    saveAccounts();
+    deleteMsg(ctx, chatId, ctx.callbackQuery.message.message_id).catch(() => {});
+    await sendMsg(ctx, chatId, `✅ <b>បានលុប <code>${esc(typeName)}</code> ចំនួន ${count} records!</b>`);
+    return;
+  }
+
+  if (data === "dtcancel" && isAdmin(uid)) {
+    await ctx.answerCbQuery();
+    deleteMsg(ctx, chatId, ctx.callbackQuery.message.message_id).catch(() => {});
+    await sendMsg(ctx, chatId, "🚫 <b>បានបោះបង់ការលុប</b>");
     return;
   }
 
   await ctx.answerCbQuery();
 });
 
-// ── Text message router ───────────────────────────────────────────────────────
-bot.on("text", async (ctx) => {
+// ── 19. Text message router ───────────────────────────────────────────────────
+bot.on("text", async ctx => {
   const uid    = ctx.from.id;
   const chatId = ctx.chat.id;
   const text   = ctx.message.text.trim();
 
-  if (maintenanceMode() && !isAdmin(uid)) {
-    return sendMsg(ctx, chatId, "🔧 <b>Bot កំពុង Update…</b>");
+  notifyAdminNewUser(ctx, ctx.from).catch(() => {});
+
+  if (MAINTENANCE_MODE && !isAdmin(uid)) {
+    return sendMsg(ctx, chatId, "🔧 <b>Bot កំពុង Update សូមរង់ចាំមួយភ្លែត...</b>");
   }
 
-  // ⚙️ Admin panel toggle
-  if (text === "⚙️ ការកំណត់" && isAdmin(uid)) {
-    delete sessions[uid];
-    return showAdminMenu(ctx, chatId);
+  // Admin ⚙️ button
+  if (text === ADMIN_SETTINGS_BTN && isAdmin(uid)) {
+    const sess = user_sessions[uid] ?? {};
+    if (String(sess.state || "").startsWith("admin_input:")) delete user_sessions[uid];
+    saveSessions();
+    return sendAdminSettingsMenu(ctx, chatId);
   }
 
+  // ── Admin state machine ───────────────────────────────────────────────────
   if (isAdmin(uid)) {
-    const sess  = sessions[uid] ?? {};
+    const sess  = user_sessions[uid] ?? {};
     const state = sess.state ?? "";
 
-    // Back / Cancel from any admin state
-    if ((text === "⬅️ ត្រឡប់" || text === "🚫 បោះបង់") && state.startsWith("admin_")) {
-      delete sessions[uid]; saveSessions();
-      return showAdminMenu(ctx, chatId);
+    // BTN_BACK_SETTINGS from any admin state
+    if (text === BTN_BACK_SETTINGS) {
+      delete user_sessions[uid]; saveSessions();
+      return sendAdminSettingsMenu(ctx, chatId);
     }
 
-    // Admin input states
+    // Admin pending input state
     if (state.startsWith("admin_input:")) {
-      return handleAdminInput(ctx, chatId, uid, ctx.message.message_id, state.slice("admin_input:".length), text);
+      const key = state.slice("admin_input:".length);
+      return handleAdminInput(ctx, chatId, uid, ctx.message.message_id, key, text);
     }
-    if (state === "admin_waiting_for_accounts") return handleAccountsInput(ctx, chatId, uid, text);
-    if (state === "admin_waiting_for_type")     return handleTypeInput(ctx, chatId, uid, text);
-    if (state === "admin_waiting_for_price")    return handlePriceInput(ctx, chatId, uid, text);
-    if (state === "admin_delete_select")        return handleDeleteSelect(ctx, chatId, uid, text, sess);
-    if (state === "admin_delete_confirm")       return handleDeleteConfirm(ctx, chatId, uid, text, sess);
-    if (state === "admin_broadcast_confirm")    return handleBroadcastConfirm(ctx, chatId, uid, text, sess);
 
-    // Main admin panel buttons
-    switch (text) {
-      case "➕ បន្ថែម គូប៉ុង":
-        sessions[uid] = { state: "admin_waiting_for_accounts" }; saveSessions();
+    // Delete type selection
+    if (state === "delete_type_select") {
+      if (text === BTN_BACK_SETTINGS) { delete user_sessions[uid]; saveSessions(); return sendAdminSettingsMenu(ctx, chatId); }
+      const labels = sess.labels || {};
+      const typeName = labels[text];
+      if (typeName && accounts_data.account_types[typeName] !== undefined) {
+        const count = accounts_data.account_types[typeName].length;
+        const price = accounts_data.prices[typeName] ?? 0;
+        user_sessions[uid] = { state: "delete_type_confirm", type_name: typeName }; saveSessions();
         return sendMsg(ctx, chatId,
-          "<b>➕ បញ្ចូលកូដគូប៉ុងមួយជួរមួយ:</b>\n\n<i>ឧ.:\nCODE-1234\nCODE-5678</i>",
-          CANCEL_KB);
-
-      case "🗑 លុបប្រភេទ": {
-        const types = Object.keys(accounts.account_types);
-        if (!types.length) return sendMsg(ctx, chatId, "⚠️ មិនមានប្រភេទណាទេ", ADMIN_SETTINGS_KB);
-        sessions[uid] = { state: "admin_delete_select" }; saveSessions();
-        return sendMsg(ctx, chatId, "🗑 <b>ជ្រើសរើសប្រភេទដែលចង់លុប:</b>",
-          Markup.keyboard([...types.map((t) => [t]), [["⬅️ ត្រឡប់"]]]).resize());
+          `⚠️ <b>តើអ្នកពិតជាចង់លុបប្រភេទ គូប៉ុង នេះមែនទេ?</b>\n\n` +
+          `<blockquote>🔹 ប្រភេទ: ${esc(typeName)}\n🔹 ចំនួន: ${count}\n🔹 តម្លៃ: $${price}</blockquote>`,
+          Markup.keyboard([[BTN_DELETE_CONFIRM], [BTN_DELETE_CANCEL]]).resize().persistent());
       }
-
-      case "📦 ស្តុក គូប៉ុង":   return showStock(ctx, chatId);
-      case "📋 របាយការណ៍ទិញ": return showBuyers(ctx, chatId);
-      case "👥 អ្នកប្រើប្រាស់": return showUsers(ctx, chatId);
-
-      case "💳 ឈ្មោះ Payment":
-        sessions[uid] = { state: "admin_input:payment_name" }; saveSessions();
-        return sendMsg(ctx, chatId,
-          `💳 <b>ឈ្មោះ Payment:</b> <code>${esc(getSetting("PAYMENT_NAME","RADY"))}</code>\n\nផ្ញើឈ្មោះថ្មី:`,
-          CANCEL_KB);
-
-      case "🔑 Bakong Token": {
-        const tok = getSetting("BAKONG_TOKEN", "");
-        sessions[uid] = { state: "admin_input:bakong_token" }; saveSessions();
-        return sendMsg(ctx, chatId,
-          `🔑 <b>Bakong Token:</b> <code>${tok ? tok.slice(0, 10) + "…" : "មិនទាន់មាន"}</code>\n\nផ្ញើ Token ថ្មី:`,
-          CANCEL_KB);
-      }
-
-      case "👑 គ្រប់គ្រង Admin": {
-        const extra = getSetting("EXTRA_ADMIN_IDS", []);
-        const list  = extra.length ? extra.map((x) => `• <code>${x}</code>`).join("\n") : "(មិនមី)";
-        sessions[uid] = { state: "admin_input:admin_action" }; saveSessions();
-        return sendMsg(ctx, chatId, `👑 <b>Admin IDs ផ្សេង:</b>\n${list}\n\nជ្រើសរើស:`,
-          Markup.keyboard([["➕ Add Admin"], ["➖ Remove Admin"], ["⬅️ ត្រឡប់"]]).resize());
-      }
-
-      case "➕ Add Admin":
-        if (state === "admin_input:admin_action") {
-          sessions[uid] = { state: "admin_input:admin_add" }; saveSessions();
-          return sendMsg(ctx, chatId, "➕ ផ្ញើ <b>User ID</b> ដែលចង់បន្ថែម:", CANCEL_KB);
-        }
-        break;
-
-      case "➖ Remove Admin":
-        if (state === "admin_input:admin_action") {
-          sessions[uid] = { state: "admin_input:admin_remove" }; saveSessions();
-          return sendMsg(ctx, chatId, "➖ ផ្ញើ <b>User ID</b> ដែលចង់ដក:", CANCEL_KB);
-        }
-        break;
-
-      case "🛠 Maintenance Mode": {
-        const on = maintenanceMode();
-        return sendMsg(ctx, chatId, `🛠 <b>ស្ថានភាព Bot:</b> ${on ? "🔴 បិទ" : "🟢 បើក"}`,
-          Markup.keyboard([["🔴 បិទ Bot", "🟢 បើក Bot"], ["⬅️ ត្រឡប់"]]).resize());
-      }
-      case "🔴 បិទ Bot": setSetting("MAINTENANCE_MODE", true);
-        return sendMsg(ctx, chatId, "🔴 <b>Bot ត្រូវបានបិទ (Maintenance)</b>", ADMIN_SETTINGS_KB);
-      case "🟢 បើក Bot": setSetting("MAINTENANCE_MODE", false);
-        return sendMsg(ctx, chatId, "🟢 <b>Bot ត្រូវបានបើក</b>", ADMIN_SETTINGS_KB);
-
-      case "📢 ផ្សាយព័ត៌មាន":
-        sessions[uid] = { state: "admin_input:broadcast_msg" }; saveSessions();
-        return sendMsg(ctx, chatId,
-          "📢 <b>ផ្ញើ​សារ​ដែល​ចង់​ផ្សាយ​ទៅ​អ្នក​ប្រើ​ទាំង​អស់:</b>", CANCEL_KB);
-
-      case "⬅️ ត្រឡប់":
-        delete sessions[uid]; saveSessions();
-        return showAdminMenu(ctx, chatId);
+      return;
     }
+
+    // Delete type confirm
+    if (state === "delete_type_confirm") {
+      const typeName = sess.type_name;
+      delete user_sessions[uid]; saveSessions();
+      if (text === BTN_DELETE_CONFIRM && typeName) {
+        const count = (accounts_data.account_types[typeName] ?? []).length;
+        delete accounts_data.account_types[typeName];
+        delete accounts_data.prices[typeName];
+        accounts_data.accounts = (accounts_data.accounts || []).filter(a => a.type !== typeName);
+        saveAccounts();
+        return sendMsg(ctx, chatId, `✅ <b>បានលុបប្រភេទ <code>${esc(typeName)}</code> ចំនួន ${count} records!</b>`, ADMIN_SETTINGS_KB);
+      }
+      return sendMsg(ctx, chatId, "🚫 <b>បានបោះបង់ការលុប</b>", ADMIN_SETTINGS_KB);
+    }
+
+    // Broadcast confirm
+    if (state === "broadcast_confirm") {
+      const bcastMsgId  = sess.broadcast_message_id;
+      const bcastChatId = sess.broadcast_chat_id || chatId;
+      const useCopy     = Boolean(sess.broadcast_use_copy);
+      delete user_sessions[uid]; saveSessions();
+      if (text === BTN_BROADCAST_CONFIRM && bcastMsgId) {
+        await sendMsg(ctx, chatId, "📢 កំពុង​ផ្សាយ​សារ ... សូមរង់ចាំ", ADMIN_SETTINGS_KB);
+        runBroadcast(ctx, chatId, bcastChatId, bcastMsgId, useCopy);
+      } else {
+        await sendMsg(ctx, chatId, "🚫 <b>បាន​បោះបង់​ការ​ផ្សាយ</b>", ADMIN_SETTINGS_KB);
+      }
+      return;
+    }
+
+    // Waiting for accounts (coupon input)
+    if (state === "waiting_for_accounts") {
+      if (text === BTN_BACK_SETTINGS || text === BTN_CANCEL_INPUT) {
+        delete user_sessions[uid]; saveSessions(); return sendAdminSettingsMenu(ctx, chatId);
+      }
+      const lines = text.split("\n").map(l => l.trim()).filter(Boolean);
+      if (!lines.length) return sendMsg(ctx, chatId, "<b>អ៊ីមែលមិនត្រឹមត្រូវតាមទម្រង់</b>", ADD_ACCOUNT_KB);
+
+      const newAccounts = lines.map(l => {
+        if (l.includes("|")) { const [ph, pw] = l.split("|").map(s => s.trim()); return { phone: ph, password: pw }; }
+        return { code: l };
+      });
+      const existingTypes = Object.keys(accounts_data.account_types);
+      user_sessions[uid] = { state: "waiting_for_account_type", accounts: newAccounts }; saveSessions();
+      const typeRows = [...existingTypes.map(t => [t]), [BTN_BACK_SETTINGS]];
+      return sendMsg(ctx, chatId,
+        `<b>បានបញ្ចូល គូប៉ុង ចំនួន ${newAccounts.length}\n\nសូមជ្រើសរើស ឬបញ្ចូលប្រភេទ គូប៉ុង៖</b>`,
+        Markup.keyboard(typeRows).resize().persistent());
+    }
+
+    // Waiting for account type
+    if (state === "waiting_for_account_type") {
+      if (text === BTN_BACK_SETTINGS || text === BTN_CANCEL_INPUT) {
+        delete user_sessions[uid]; saveSessions(); return sendAdminSettingsMenu(ctx, chatId);
+      }
+      const existingPrice = accounts_data.prices[text];
+      user_sessions[uid] = { ...sess, state: "waiting_for_price", account_type: text }; saveSessions();
+      if (existingPrice != null) {
+        return sendMsg(ctx, chatId,
+          `<b>ប្រភេទ <code>${esc(text)}</code> មានស្រាប់ ដែលមានតម្លៃ ${existingPrice}$\n\nតម្លៃត្រូវតែដូចគ្នា (${existingPrice}$) ដើម្បីបន្ថែម គូប៉ុង</b>`,
+          ADD_ACCOUNT_KB);
+      }
+      return sendMsg(ctx, chatId, `<b>សូមដាក់តម្លៃក្នុងប្រភេទ គូប៉ុង ${esc(text)}</b>`, ADD_ACCOUNT_KB);
+    }
+
+    // Waiting for price
+    if (state === "waiting_for_price") {
+      if (text === BTN_BACK_SETTINGS || text === BTN_CANCEL_INPUT) {
+        delete user_sessions[uid]; saveSessions(); return sendAdminSettingsMenu(ctx, chatId);
+      }
+      const price = parseFloat(text.replace("$", "").trim());
+      if (isNaN(price) || price < 0) return sendMsg(ctx, chatId, "តម្លៃមិនត្រឹមត្រូវ។ សូមបញ្ចូលតម្លៃជាលេខ (ឧ: 5.99)");
+
+      const accountType = sess.account_type;
+      const accsToAdd   = sess.accounts ?? [];
+      const existingPrice = accounts_data.prices[accountType];
+      if (existingPrice != null && Math.round(existingPrice * 10000) !== Math.round(price * 10000)) {
+        return sendMsg(ctx, chatId,
+          `❌ <b>មិនអាចបញ្ចូលបាន!</b>\n\nប្រភេទ <code>${esc(accountType)}</code> មានតម្លៃ <b>${existingPrice}$</b> ស្រាប់។\nតម្លៃ <b>${price}$</b> មិនដូចគ្នា។ សូមប្រើ <b>${existingPrice}$</b>`,
+          ADD_ACCOUNT_KB);
+      }
+
+      const allExisting = new Set(
+        Object.values(accounts_data.account_types).flat()
+          .map(a => (a.code || a.email || a.phone || "").toLowerCase())
+          .filter(Boolean)
+      );
+      const toAdd  = accsToAdd.filter(a => !allExisting.has((a.code || a.email || a.phone || "").toLowerCase()));
+      const dupes  = accsToAdd.length - toAdd.length;
+
+      if (!accounts_data.account_types[accountType]) accounts_data.account_types[accountType] = [];
+      accounts_data.account_types[accountType].push(...toAdd);
+      accounts_data.prices[accountType] = Math.round(price * 10000) / 10000;
+      accounts_data.accounts = [...(accounts_data.accounts || []), ...toAdd];
+      saveAccounts();
+      delete user_sessions[uid]; saveSessions();
+
+      await sendMsg(ctx, chatId,
+        `✅ <b>បានបញ្ចូល គូប៉ុង ដោយជោគជ័យ</b>\n\n<blockquote>🔹 ចំនួន: ${toAdd.length}\n🔹 ប្រភេទ: ${esc(accountType)}\n🔹 តម្លៃ: ${price}$</blockquote>` +
+        (dupes ? `\n\n⚠️ ដដែល (រំលង): ${dupes}` : ""));
+      return sendAdminSettingsMenu(ctx, chatId);
+    }
+
+    // Admin button dispatcher
+    if (ADMIN_BUTTON_LABELS.has(text)) return dispatchAdminButton(ctx, chatId, uid, text);
   }
 
-  // ── User quantity input ───────────────────────────────────────────────────
-  const sess  = sessions[uid] ?? {};
-  const state = sess.state ?? "";
-
-  if (state === "waiting_for_quantity") {
-    if (text === "🚫 បោះបង់" || text === "/cancel") {
-      delete sessions[uid]; saveSessions();
-      await sendMsg(ctx, chatId, "🚫 <b>បានបោះបង់</b>", mainKb(uid));
-      return showAccountSelection(ctx, chatId, uid);
+  // ── User: 💵 ទិញគូប៉ុង ───────────────────────────────────────────────────
+  if (text === "💵 ទិញគូប៉ុង") {
+    const sess = user_sessions[uid];
+    if (sess?.state === "payment_pending") {
+      return sendMsg(ctx, chatId,
+        "⏳ <b>សូមបញ្ចប់ការទិញបច្ចុប្បន្នជាមុនសិន</b>\n\nអ្នកមានការបញ្ជាទិញមួយកំពុងដំណើរការ។ " +
+        "សូមបញ្ចប់ការទូទាត់ ឬចុច /cancel មុននឹងចាប់ផ្ដើមការទិញថ្មី។");
     }
-    const qty = parseInt(text, 10);
-    if (isNaN(qty) || qty < 1) {
-      return sendMsg(ctx, chatId, "❌ សូមបញ្ចូល<b>លេខ</b>ត្រឹមត្រូវ (ឧ. 1, 2, 3…):", CANCEL_KB);
-    }
-    const { account_type: at, price = 0 } = sess;
-    const total = Math.round(price * qty * 100) / 100;
-    sess.quantity    = qty;
-    sess.total_price = total;
-    sessions[uid]    = sess;
-
-    return sendMsg(ctx, chatId,
-      `📋 <b>សង្ខេបការបញ្ជាទិញ</b>\n\n` +
-      `🛒 <b>${esc(at)}</b> × ${qty}\n` +
-      `💵 <b>តម្លៃសរុប: $${total.toFixed(2)}</b>\n\n` +
-      `📱 ចុច <b>បញ្ជាក់</b> ដើម្បីទទួល QR Code ទូទាត់:`,
-      Markup.inlineKeyboard([
-        [
-          Markup.button.callback(`✅ បញ្ជាក់ $${total.toFixed(2)}`, `confirm_buy:${qty}`),
-          Markup.button.callback("🚫 បោះបង់", "cancel_purchase"),
-        ],
-      ]));
+    delete user_sessions[uid];
+    return showAccountSelection(ctx, chatId);
   }
 
-  if (state === "payment_pending") {
-    return sendMsg(ctx, chatId,
-      "⏳ <b>សូមបញ្ចប់ការទូទាត់ QR ជាមុនសិន</b>\nឬចុច /cancel ដើម្បីបោះបង់");
+  // Default fallback
+  if (user_sessions[uid]?.state === "payment_pending") {
+    return sendMsg(ctx, chatId, "⏳ <b>សូមបញ្ចប់ការទូទាត់ QR ជាមុនសិន</b>\nឬចុច /cancel ដើម្បីបោះបង់");
   }
-
-  // Default
-  await showAccountSelection(ctx, chatId, uid);
+  await showAccountSelection(ctx, chatId);
 });
 
-// ── Admin input handlers ──────────────────────────────────────────────────────
-async function handleAdminInput(ctx, chatId, uid, msgId, key, text) {
-  const isCancel = text === "⬅️ ត្រឡប់" || text === "🚫 បោះបង់";
+// ── 20. Admin button dispatcher ───────────────────────────────────────────────
+async function dispatchAdminButton(ctx, chatId, uid, btn) {
+  switch (btn) {
+    case BTN_ADD_ACCOUNT:
+      user_sessions[uid] = { state: "waiting_for_accounts" }; saveSessions();
+      return sendMsg(ctx, chatId, "<b>បញ្ចូលគូប៉ុងសម្រាប់លក់</b>", ADD_ACCOUNT_KB);
 
-  if (key === "payment_name") {
-    if (isCancel) { delete sessions[uid]; saveSessions(); return showAdminMenu(ctx, chatId); }
-    setSetting("PAYMENT_NAME", text);
-    delete sessions[uid]; saveSessions();
-    return sendMsg(ctx, chatId, `✅ <b>ឈ្មោះ Payment:</b> ${esc(text)}`, ADMIN_SETTINGS_KB);
+    case BTN_DELETE_TYPE: {
+      const types = Object.keys(accounts_data.account_types);
+      if (!types.length) return sendMsg(ctx, chatId, "⚠️ <b>មិនមានប្រភេទ គូប៉ុង ណាមួយទេ!</b>");
+      const labelsMap = {};
+      const rows = types.map(t => {
+        const count = accounts_data.account_types[t].length;
+        const label = `${shortLabel(t)} – មានក្នុងស្តុក ${count}`;
+        labelsMap[label] = t;
+        return [label];
+      });
+      rows.push([BTN_BACK_SETTINGS]);
+      user_sessions[uid] = { state: "delete_type_select", labels: labelsMap }; saveSessions();
+      return sendMsg(ctx, chatId, "🗑 <b>ជ្រើសរើសប្រភេទ គូប៉ុង ដែលចង់លុប៖</b>",
+        Markup.keyboard(rows).resize().persistent());
+    }
+
+    case BTN_STOCK:       return exportStock(ctx, chatId);
+    case BTN_BUYERS:      return exportBuyers(ctx, chatId);
+    case BTN_USERS:       return showUsersList(ctx, chatId);
+
+    case BTN_PAYMENT:
+      return sendMsg(ctx, chatId,
+        `💳 <b>ឈ្មោះ Payment បច្ចុប្បន្ន៖</b>\n<code>${esc(PAYMENT_NAME || "(មិនទាន់កំណត់)")}</code>`,
+        PAYMENT_SUBMENU_KB);
+
+    case BTN_PAYMENT_EDIT:
+      user_sessions[uid] = { state: "admin_input:payment" }; saveSessions();
+      return sendMsg(ctx, chatId, "💳 សូមផ្ញើ <b>ឈ្មោះ Payment</b> ថ្មី:\n\n<i>ចុច 🚫 បោះបង់ ដើម្បីបោះបង់</i>", CANCEL_INPUT_KB);
+
+    case BTN_BAKONG:
+      return sendMsg(ctx, chatId,
+        `🔑 <b>Bakong Token បច្ចុប្បន្ន៖</b>\n\n<code>${esc(BAKONG_API_TOKEN || "(មិនទាន់កំណត់)")}</code>`,
+        BAKONG_SUBMENU_KB);
+
+    case BTN_BAKONG_API_EDIT:
+      user_sessions[uid] = { state: "admin_input:bakong_api" }; saveSessions();
+      return sendMsg(ctx, chatId, "🔑 សូមផ្ញើ <b>Bakong Token</b> ថ្មី:\n\n<i>ចុច 🚫 បោះបង់ ដើម្បីបោះបង់</i>", CANCEL_INPUT_KB);
+
+    case BTN_BAKONG_TOKEN_INFO:
+      return sendTokenInfo(ctx, chatId);
+
+    case BTN_CHANNEL: {
+      const cur = CHANNEL_ID || "(មិនទាន់កំណត់)";
+      return sendMsg(ctx, chatId,
+        `📢 <b>Channel ID បច្ចុប្បន្ន៖</b>\n<code>${esc(String(cur))}</code>`,
+        CHANNEL_SUBMENU_KB);
+    }
+
+    case BTN_CHANNEL_EDIT:
+      user_sessions[uid] = { state: "admin_input:channel" }; saveSessions();
+      return sendMsg(ctx, chatId,
+        "📢 សូមផ្ញើ <b>Channel ID</b> ថ្មី (ឧ. <code>-1001234567890</code>):\n\n<i>ចុច 🚫 បោះបង់ ដើម្បីបោះបង់</i>",
+        CANCEL_INPUT_KB);
+
+    case BTN_CHANNEL_CLEAR:
+      CHANNEL_ID = ""; setSetting("TELEGRAM_CHANNEL_ID", "");
+      return sendMsg(ctx, chatId, "✅ បានលុប Channel ID", ADMIN_SETTINGS_KB);
+
+    case BTN_ADMINS: {
+      const extras = [...EXTRA_ADMIN_IDS].sort();
+      const extrasStr = extras.length ? extras.map(x => `• <code>${x}</code>`).join("\n") : "(គ្មាន)";
+      return sendMsg(ctx, chatId,
+        `👑 <b>Admin បឋម៖</b> <code>${ADMIN_ID}</code>\n\n➕ <b>Admin បន្ថែម៖</b>\n${extrasStr}`,
+        ADMINS_SUBMENU_KB);
+    }
+
+    case BTN_ADMIN_ADD:
+      user_sessions[uid] = { state: "admin_input:admin_add" }; saveSessions();
+      return sendMsg(ctx, chatId, "➕ សូមផ្ញើ <b>Telegram User ID</b> ដែលចង់បន្ថែម:", CANCEL_INPUT_KB);
+
+    case BTN_ADMIN_REMOVE:
+      user_sessions[uid] = { state: "admin_input:admin_remove" }; saveSessions();
+      return sendMsg(ctx, chatId, "➖ សូមផ្ញើ <b>Telegram User ID</b> ដែលចង់ដក:", CANCEL_INPUT_KB);
+
+    case BTN_MAINTENANCE: {
+      const status = MAINTENANCE_MODE ? "🔴 បិទ" : "🟢 បើក";
+      return sendMsg(ctx, chatId, `🛠 <b>ស្ថានភាព Bot បច្ចុប្បន្ន៖</b> ${status}`, MAINTENANCE_SUBMENU_KB);
+    }
+
+    case BTN_MAINT_ON:
+      MAINTENANCE_MODE = true; setSetting("MAINTENANCE_MODE", "true");
+      return sendMsg(ctx, chatId, "🔴 បានបិទ Bot", ADMIN_SETTINGS_KB);
+
+    case BTN_MAINT_OFF:
+      MAINTENANCE_MODE = false; setSetting("MAINTENANCE_MODE", "false");
+      return sendMsg(ctx, chatId, "🟢 បានបើក Bot", ADMIN_SETTINGS_KB);
+
+    case BTN_BROADCAST:
+      user_sessions[uid] = { state: "admin_input:broadcast" }; saveSessions();
+      return sendMsg(ctx, chatId,
+        "📢 សូមផ្ញើ​សារ​ដែល​ចង់​ផ្សាយ​ទៅ​អ្នក​ប្រើ​ប្រាស់​ទាំង​អស់៖\n\n<i>ចុច 🚫 បោះបង់ ដើម្បីបោះបង់</i>",
+        CANCEL_INPUT_KB);
+
+    case BTN_EMAIL_MGMT:
+      return sendMsg(ctx, chatId,
+        "📧 <b>ការគ្រប់គ្រងអ៊ីម៉ែល</b>\n\n⚠️ Dropmail feature មិនអាចប្រើបានក្នុង version JavaScript នេះ។\nត្រូវការ DROPMAIL_API_TOKEN ដែល integrate ជាមួយ Dropmail API។",
+        BACK_SETTINGS_KB);
+
+    case BTN_TTS_MGMT:
+      return sendMsg(ctx, chatId,
+        "🔊 <b>TTS Bot Management</b>\n\n⚠️ TTS feature មិនអាចប្រើបានក្នុង version JavaScript នេះ។\nត្រូវការ edge-tts library (Python only)។",
+        BACK_SETTINGS_KB);
+
+    default:
+      return sendAdminSettingsMenu(ctx, chatId);
+  }
+}
+
+// ── 21. Admin input handlers ──────────────────────────────────────────────────
+async function handleAdminInput(ctx, chatId, uid, msgId, key, text) {
+  const cancelWords = new Set(["បោះបង់", "🚫 បោះបង់", BTN_CANCEL_INPUT, BTN_BACK_SETTINGS]);
+  if (cancelWords.has(text)) {
+    delete user_sessions[uid]; saveSessions();
+    return sendAdminSettingsMenu(ctx, chatId);
   }
 
-  if (key === "bakong_token") {
-    if (isCancel) { delete sessions[uid]; saveSessions(); return showAdminMenu(ctx, chatId); }
-    setSetting("BAKONG_TOKEN", text);
-    delete sessions[uid]; saveSessions();
-    await deleteMsg(ctx, chatId, msgId);
+  if (key === "payment") {
+    if (!text) return sendMsg(ctx, chatId, "សូមផ្ញើឈ្មោះ Payment ថ្មី (ឬចុច 🚫 បោះបង់)");
+    PAYMENT_NAME = text; setSetting("PAYMENT_NAME", text);
+    delete user_sessions[uid]; saveSessions();
+    return sendMsg(ctx, chatId, `✅ បានប្តូរឈ្មោះ Payment ទៅជា <b>${esc(text)}</b>`, mainKb(uid));
+  }
+
+  if (key === "bakong_api" || key === "bakong") {
+    if (!text) return sendMsg(ctx, chatId, "សូមផ្ញើ Bakong token ថ្មី (ឬចុច 🚫 បោះបង់)");
+    BAKONG_API_TOKEN = text;
+    BAKONG_TOKEN     = text;
+    setSetting("BAKONG_API_TOKEN", text);
+    delete user_sessions[uid]; saveSessions();
+    deleteMsg(ctx, chatId, msgId).catch(() => {});
     return sendMsg(ctx, chatId,
-      `✅ <b>Bakong Token បានកំណត់</b> (prefix: <code>${esc(text.slice(0, 10))}…</code>)`,
-      ADMIN_SETTINGS_KB);
+      `✅ បានប្តូរ <b>Bakong Token</b> (Prefix: <code>${esc(text.slice(0, 10))}…</code>)`,
+      mainKb(uid));
+  }
+
+  if (key === "channel") {
+    if (!text) return sendMsg(ctx, chatId, "សូមផ្ញើ Channel ID ថ្មី ឬ <code>off</code> ដើម្បីបិទ");
+    if (["off","none","clear","delete","remove"].includes(text.toLowerCase())) {
+      CHANNEL_ID = ""; setSetting("TELEGRAM_CHANNEL_ID", "");
+    } else {
+      CHANNEL_ID = text; setSetting("TELEGRAM_CHANNEL_ID", text);
+    }
+    delete user_sessions[uid]; saveSessions();
+    return sendMsg(ctx, chatId, `✅ បានកំណត់ Channel ID ទៅជា <code>${esc(CHANNEL_ID || "(ទទេ)")}</code>`, mainKb(uid));
   }
 
   if (key === "admin_add") {
-    if (isCancel) { delete sessions[uid]; saveSessions(); return showAdminMenu(ctx, chatId); }
     const target = parseInt(text, 10);
-    if (isNaN(target)) return sendMsg(ctx, chatId, "❌ User ID ត្រូវតែជាលេខ");
-    const extra = getSetting("EXTRA_ADMIN_IDS", []);
-    if (!extra.includes(target)) extra.push(target);
-    setSetting("EXTRA_ADMIN_IDS", extra);
-    delete sessions[uid]; saveSessions();
-    return sendMsg(ctx, chatId, `✅ <b>បន្ថែម Admin:</b> <code>${target}</code>`, ADMIN_SETTINGS_KB);
+    if (isNaN(target)) return sendMsg(ctx, chatId, "❌ user_id ត្រូវតែជាលេខ (ឬចុច 🚫 បោះបង់)");
+    if (target === ADMIN_ID) { delete user_sessions[uid]; saveSessions(); return sendMsg(ctx, chatId, "ℹ️ Admin បឋមមិនអាចលុប/បន្ថែមបានទេ។", mainKb(uid)); }
+    EXTRA_ADMIN_IDS.add(target);
+    setSetting("EXTRA_ADMIN_IDS", JSON.stringify([...EXTRA_ADMIN_IDS]));
+    delete user_sessions[uid]; saveSessions();
+    return sendMsg(ctx, chatId, `✅ បានបន្ថែម <code>${target}</code> ជា admin`);
   }
 
   if (key === "admin_remove") {
-    if (isCancel) { delete sessions[uid]; saveSessions(); return showAdminMenu(ctx, chatId); }
     const target = parseInt(text, 10);
-    if (isNaN(target)) return sendMsg(ctx, chatId, "❌ User ID ត្រូវតែជាលេខ");
-    setSetting("EXTRA_ADMIN_IDS", getSetting("EXTRA_ADMIN_IDS", []).filter((x) => x !== target));
-    delete sessions[uid]; saveSessions();
-    return sendMsg(ctx, chatId, `✅ <b>ដក Admin:</b> <code>${target}</code>`, ADMIN_SETTINGS_KB);
+    if (isNaN(target)) return sendMsg(ctx, chatId, "❌ user_id ត្រូវតែជាលេខ (ឬចុច 🚫 បោះបង់)");
+    EXTRA_ADMIN_IDS.delete(target);
+    setSetting("EXTRA_ADMIN_IDS", JSON.stringify([...EXTRA_ADMIN_IDS]));
+    delete user_sessions[uid]; saveSessions();
+    return sendMsg(ctx, chatId, `✅ បានដក <code>${target}</code> ចាក admin`);
   }
 
-  if (key === "admin_action") {
-    if (isCancel) { delete sessions[uid]; saveSessions(); return showAdminMenu(ctx, chatId); }
-    return;
-  }
-
-  if (key === "broadcast_msg") {
-    if (isCancel) { delete sessions[uid]; saveSessions(); return showAdminMenu(ctx, chatId); }
-    sessions[uid] = { state: "admin_broadcast_confirm", broadcast_text: text }; saveSessions();
+  if (key === "broadcast") {
+    // Store message for forward/copy broadcast
+    user_sessions[uid] = {
+      state: "broadcast_confirm",
+      broadcast_message_id:  ctx.message.message_id,
+      broadcast_chat_id:     chatId,
+      broadcast_use_copy:    true,
+      broadcast_text:        text,
+    }; saveSessions();
     return sendMsg(ctx, chatId,
-      `📢 <b>ព្រមព្រៀងផ្សាយ:</b>\n\n${esc(text)}\n\n` +
-      `<i>ផ្សាយទៅអ្នកប្រើ ${Object.keys(users).length} នាក់</i>`,
-      Markup.keyboard([["✅ បញ្ជាក់ផ្សាយ"], ["🚫 បោះបង់ការផ្សាយ"]]).resize());
+      `📢 <b>ព្រមព្រៀងផ្សាយ:</b>\n\n${esc(text)}\n\n<i>ផ្សាយទៅអ្នកប្រើ ${Object.keys(known_users).length} នាក់</i>`,
+      BROADCAST_CONFIRM_KB);
   }
 }
 
-async function handleAccountsInput(ctx, chatId, uid, text) {
-  if (text === "⬅️ ត្រឡប់" || text === "🚫 បោះបង់") {
-    delete sessions[uid]; saveSessions(); return showAdminMenu(ctx, chatId);
-  }
-  const codes = text.split("\n").map((l) => l.trim()).filter(Boolean);
-  if (!codes.length) return sendMsg(ctx, chatId, "❌ មិនឃើញកូដ — ផ្ញើម្ដងទៀត:");
-
-  sessions[uid] = { state: "admin_waiting_for_type", new_accounts: codes.map((c) => ({ code: c })) };
-  saveSessions();
-
-  const types = Object.keys(accounts.account_types);
-  return sendMsg(ctx, chatId,
-    `✅ <b>ទទួលបាន ${codes.length} គូប៉ុង</b>\n\n` +
-    `📁 <b>ប្រភេទដែលមានស្រាប់:</b>\n` +
-    (types.map((t) => `• ${t}`).join("\n") || "<i>(មិនទាន់មី)</i>") +
-    "\n\nវាយឈ្មោះប្រភេទ (ថ្មី ឬដែលមានស្រាប់):",
-    CANCEL_KB);
-}
-
-async function handleTypeInput(ctx, chatId, uid, text) {
-  if (text === "⬅️ ត្រឡប់" || text === "🚫 បោះបង់") {
-    delete sessions[uid]; saveSessions(); return showAdminMenu(ctx, chatId);
-  }
-  const sess = sessions[uid] ?? {};
-  sess.account_type = text;
-  sess.state        = "admin_waiting_for_price";
-  sessions[uid]     = sess; saveSessions();
-
-  const existing = accounts.prices[text];
-  return sendMsg(ctx, chatId,
-    `💵 <b>ប្រភេទ:</b> ${esc(text)}\n` +
-    (existing != null ? `តម្លៃបច្ចុប្បន្ន: <b>$${existing.toFixed(2)}</b>\n\nផ្ញើតម្លៃថ្មី ឬ <code>same</code>:` : "ផ្ញើ<b>តម្លៃ</b> (USD) ឧ. <code>1.50</code>:"),
-    CANCEL_KB);
-}
-
-async function handlePriceInput(ctx, chatId, uid, text) {
-  if (text === "⬅️ ត្រឡប់" || text === "🚫 បោះបង់") {
-    delete sessions[uid]; saveSessions(); return showAdminMenu(ctx, chatId);
-  }
-  const sess    = sessions[uid] ?? {};
-  const at      = sess.account_type ?? "";
-  const newAccs = sess.new_accounts ?? [];
-  const existing = accounts.prices[at];
-
-  let price;
-  if (text.toLowerCase() === "same" && existing != null) {
-    price = existing;
-  } else {
-    price = parseFloat(text.replace("$", "").trim());
-    if (isNaN(price) || price < 0) return sendMsg(ctx, chatId, "❌ តម្លៃមិនត្រឹមត្រូវ — ឧ. <code>1.50</code>:");
-    price = Math.round(price * 100) / 100;
-  }
-
-  if (!accounts.account_types[at]) accounts.account_types[at] = [];
-  const allExisting = new Set(
-    Object.values(accounts.account_types).flat().map((a) => (a.code ?? "").toLowerCase())
-  );
-  const toAdd  = newAccs.filter((a) => !allExisting.has((a.code ?? "").toLowerCase()));
-  const dupes  = newAccs.length - toAdd.length;
-
-  accounts.account_types[at].push(...toAdd);
-  accounts.prices[at] = price;
-  saveAccounts();
-  delete sessions[uid]; saveSessions();
-
-  return sendMsg(ctx, chatId,
-    `✅ <b>បន្ថែមជោគជ័យ!</b>\n\n` +
-    `📁 ប្រភេទ: <b>${esc(at)}</b>\n` +
-    `💵 តម្លៃ: <b>$${price.toFixed(2)}</b>\n` +
-    `🆕 បន្ថែម: <b>${toAdd.length}</b> គូប៉ុង\n` +
-    (dupes ? `⚠️ ដដែល (រំលង): <b>${dupes}</b>\n` : "") +
-    `📦 ស្តុកសរុប: <b>${accounts.account_types[at].length}</b>`,
-    ADMIN_SETTINGS_KB);
-}
-
-async function handleDeleteSelect(ctx, chatId, uid, text, sess) {
-  if (text === "⬅️ ត្រឡប់" || text === "🚫 បោះបង់") {
-    delete sessions[uid]; saveSessions(); return showAdminMenu(ctx, chatId);
-  }
-  if (!accounts.account_types[text]) return sendMsg(ctx, chatId, "❌ ប្រភេទមិនត្រឹម — ជ្រើសពីបញ្ជី");
-  sessions[uid] = { state: "admin_delete_confirm", type_name: text }; saveSessions();
-  const count = accounts.account_types[text].length;
-  const price = accounts.prices[text] ?? 0;
-  return sendMsg(ctx, chatId,
-    `⚠️ <b>លុបប្រភេទ?</b>\n\n📁 <b>${esc(text)}</b>\n📦 ស្តុក: ${count} | 💵 $${price.toFixed(2)}\n\nការលុបនឹងដកគូប៉ុងទាំងអស់!`,
-    Markup.keyboard([["✅ បញ្ជាក់លុប"], ["🚫 បោះបង់ការលុប"]]).resize());
-}
-
-async function handleDeleteConfirm(ctx, chatId, uid, text, sess) {
-  const typeName = sess.type_name;
-  delete sessions[uid]; saveSessions();
-  if (text === "✅ បញ្ជាក់លុប" && typeName) {
-    const count = (accounts.account_types[typeName] ?? []).length;
-    delete accounts.account_types[typeName];
-    delete accounts.prices[typeName];
-    saveAccounts();
-    return sendMsg(ctx, chatId,
-      `✅ <b>លុបបានសម្រេច:</b> <code>${esc(typeName)}</code> (${count} records)`,
-      ADMIN_SETTINGS_KB);
-  }
-  return sendMsg(ctx, chatId, "🚫 <b>បោះបង់ការលុប</b>", ADMIN_SETTINGS_KB);
-}
-
-async function handleBroadcastConfirm(ctx, chatId, uid, text, sess) {
-  const broadcastText = sess.broadcast_text ?? "";
-  delete sessions[uid]; saveSessions();
-  if (text === "✅ បញ្ជាក់ផ្សាយ") {
-    await sendMsg(ctx, chatId, "📢 <b>កំពុងផ្សាយ…</b>", ADMIN_SETTINGS_KB);
-    doBroadcast(ctx, chatId, broadcastText);
-  } else {
-    await sendMsg(ctx, chatId, "🚫 <b>បោះបង់ការផ្សាយ</b>", ADMIN_SETTINGS_KB);
-  }
-}
-
-async function doBroadcast(ctx, adminChatId, text) {
-  let sent = 0, failed = 0;
-  for (const uid of Object.keys(users)) {
+// ── 22. Broadcast ─────────────────────────────────────────────────────────────
+async function runBroadcast(ctx, adminChatId, srcChatId, srcMsgId, useCopy) {
+  const uids = Object.keys(known_users);
+  let sent = 0, failed = 0, blocked = 0;
+  for (const uidStr of uids) {
+    const uid = Number(uidStr);
     try {
-      await ctx.telegram.sendMessage(Number(uid), text, { parse_mode: "HTML" });
+      if (useCopy) {
+        await ctx.telegram.copyMessage(uid, srcChatId, srcMsgId);
+      } else {
+        await ctx.telegram.forwardMessage(uid, srcChatId, srcMsgId);
+      }
       sent++;
-    } catch { failed++; }
-    await new Promise((r) => setTimeout(r, 50));
+    } catch (e) {
+      if (e.message?.includes("blocked") || e.message?.includes("deactivated")) blocked++;
+      else failed++;
+    }
+    await new Promise(r => setTimeout(r, 50));
   }
-  await sendMsg(ctx, adminChatId, `📢 <b>ផ្សាយចប់!</b>\n✅ ជោគជ័យ: ${sent}\n❌ បរាជ័យ: ${failed}`);
+  await sendMsg(ctx, adminChatId,
+    "📢 <b>ផ្សាយ​សារ​បាន​ចប់</b>\n" +
+    "━━━━━━━━━━━━━━━━━━━\n" +
+    `👥 សរុប:         ${uids.length}\n` +
+    `✅ ផ្ញើ​ជោគជ័យ:   ${sent}\n` +
+    `⛔ បាន​ប្លុក/លុប:  ${blocked}\n` +
+    `❌ បរាជ័យ:        ${failed}`, ADMIN_SETTINGS_KB);
 }
 
-// ── Admin info displays ───────────────────────────────────────────────────────
-async function showStock(ctx, chatId) {
-  const lines = ["📦 <b>ស្តុកបច្ចុប្បន្ន:</b>\n"];
-  let total = 0;
-  for (const [at, accs] of Object.entries(accounts.account_types)) {
-    const price = accounts.prices[at] ?? 0;
-    lines.push(`• <b>${esc(at)}</b>: ${accs.length} | $${price.toFixed(2)}/គ្រាប់`);
-    total += accs.length;
+// ── 23. Stock / Buyers / Users exports ───────────────────────────────────────
+async function exportStock(ctx, chatId) {
+  const types  = accounts_data.account_types;
+  const prices = accounts_data.prices;
+  const names  = Object.keys(types).sort();
+
+  if (!names.length) {
+    return sendMsg(ctx, chatId, "📦 មិនមានប្រភេទ គូប៉ុង ឡើយទេ។", ADMIN_SETTINGS_KB);
   }
-  if (!total) lines.push("<i>ស្តុកទទេ</i>");
-  lines.push(`\n📊 <b>សរុប: ${total} គូប៉ុង</b>`);
-  return sendMsg(ctx, chatId, lines.join("\n"), ADMIN_SETTINGS_KB);
+
+  const totalAvail = names.reduce((s, t) => s + (types[t] || []).length, 0);
+  await sendMsg(ctx, chatId, `📦 <b>ស្តុក គូប៉ុង</b> — ${names.length} ប្រភេទ, ${totalAvail} នៅសល់`);
+
+  for (const t of names) {
+    const pool  = types[t] || [];
+    const price = prices[t] ?? 0;
+    const lines = pool.map(acc => `• ${esc(formatAccount(acc))}`);
+    let block = `<b>${esc(t)}</b>  💰 $${price}  📦 ${pool.length}\n` +
+                (lines.length ? lines.join("\n") : "<i>(គ្មាន)</i>");
+    // Split if too long
+    const MAX = 4000;
+    while (block.length > MAX) {
+      const cut = block.lastIndexOf("\n", MAX);
+      await sendMsg(ctx, chatId, block.slice(0, cut === -1 ? MAX : cut));
+      block = block.slice(cut === -1 ? MAX : cut + 1);
+    }
+    if (block) await sendMsg(ctx, chatId, block);
+  }
+  return sendAdminSettingsMenu(ctx, chatId);
 }
 
-async function showBuyers(ctx, chatId) {
-  if (!purchases.length) return sendMsg(ctx, chatId, "📋 <b>មិនទាន់មានការទិញ</b>", ADMIN_SETTINGS_KB);
-  const recent = purchases.slice(-20).reverse();
-  const lines  = [`📋 <b>ការទិញ (${purchases.length} សរុប):</b>\n`];
-  for (const p of recent) {
-    lines.push(
-      `• ${esc(p.account_type)} ×${p.quantity} $${(p.total_price ?? 0).toFixed(2)} ` +
-      `— user ${p.user_id} [${(p.paid_at ?? "").slice(0, 10)}]`
-    );
+async function exportBuyers(ctx, chatId) {
+  if (!purchases.length) {
+    return sendMsg(ctx, chatId, "មិនមានទិន្នន័យ​ទិញ​នៅឡើយ​ទេ។", ADMIN_SETTINGS_KB);
   }
-  return sendMsg(ctx, chatId, lines.join("\n"), ADMIN_SETTINGS_KB);
+  const grouped = {};
+  for (const p of purchases) {
+    const uid = String(p.user_id);
+    if (!grouped[uid]) {
+      const u = known_users[uid] || {};
+      grouped[uid] = { first_name: u.first_name || "", last_name: u.last_name || "", username: u.username || "", purchases: [] };
+    }
+    grouped[uid].purchases.push(p);
+  }
+  const W = 60;
+  const now_str = new Date().toISOString().slice(0,19) + " UTC";
+  const lines = [
+    "=".repeat(W),
+    "  BUYERS REPORT".padStart((W + 14) / 2).padEnd(W),
+    `  ${now_str}`.padEnd(W),
+    "=".repeat(W),
+    `  Total buyers : ${Object.keys(grouped).length}`,
+  ];
+  for (const [uid, info] of Object.entries(grouped)) {
+    const fn = [info.first_name, info.last_name].filter(Boolean).join(" ") || "(no name)";
+    const un = info.username ? `@${info.username}` : "—";
+    lines.push("", "─".repeat(W),
+      `  ID       : ${uid}`, `  Name     : ${fn}`, `  Username : ${un}`,
+      `  Purchases: ${info.purchases.length}`, "─".repeat(W));
+    info.purchases.forEach((p, i) => {
+      const when = (p.purchased_at || "").slice(0, 19);
+      lines.push(`  [${i+1}] ${p.account_type}`, `      Qty   : ${p.quantity}`,
+        `      Price : $${p.total_price}`, `      Date  : ${when}`, "      Accounts:");
+      (p.accounts || []).forEach(a => lines.push(`        • ${formatAccount(a)}`));
+      if (!(p.accounts || []).length) lines.push("        (none)");
+    });
+  }
+  lines.push("", "=".repeat(W), "=".repeat(W));
+
+  const now_ts = new Date().toISOString().replace(/[:.]/g,"").slice(0,15);
+  const buf    = Buffer.from(lines.join("\n"), "utf8");
+  await sendDocument(ctx, chatId, buf, `buyers_${now_ts}.txt`,
+    `📋 របាយការណ៍ទិញ — ${Object.keys(grouped).length} អ្នក​ទិញ`);
+  return sendAdminSettingsMenu(ctx, chatId);
 }
 
-async function showUsers(ctx, chatId) {
-  const count = Object.keys(users).length;
-  const lines = [`👥 <b>អ្នកប្រើប្រាស់ (${count}):</b>\n`];
-  for (const [uid, info] of Object.entries(users).slice(0, 30)) {
+async function showUsersList(ctx, chatId) {
+  const rows = Object.entries(known_users);
+  if (!rows.length) {
+    return sendMsg(ctx, chatId, "📭 <b>មិនទាន់មានអ្នកប្រើប្រាស់ទេ។</b>", BACK_SETTINGS_KB);
+  }
+  const lines = [`👥 អ្នកប្រើប្រាស់សរុប: ${rows.length}`, ""];
+  for (const [uid, info] of rows) {
     const full  = [info.first_name, info.last_name].filter(Boolean).join(" ") || "N/A";
     const uname = info.username ? `@${info.username}` : "—";
-    lines.push(`• <code>${uid}</code> ${esc(full)} ${esc(uname)}`);
+    lines.push(`${full}`, `   🔖 ${uname}`, `   🪪 ${uid}`, "");
   }
-  if (count > 30) lines.push(`\n<i>… និង ${count - 30} ទៀត</i>`);
-  return sendMsg(ctx, chatId, lines.join("\n"), ADMIN_SETTINGS_KB);
+  const now_ts = new Date().toISOString().replace(/[:.]/g,"").slice(0,15);
+  const buf    = Buffer.from(lines.join("\n"), "utf8");
+  await sendDocument(ctx, chatId, buf, `users_${now_ts}.txt`,
+    `👥 បញ្ជីអ្នកប្រើប្រាស់ — ${rows.length} នាក់`);
+  return sendAdminSettingsMenu(ctx, chatId);
 }
 
-// ── Startup ───────────────────────────────────────────────────────────────────
+// ── 24. Token info ────────────────────────────────────────────────────────────
+async function sendTokenInfo(ctx, chatId) {
+  const lines = ["🔑 <b>Token Info</b>\n", "━━━ 🏦 Bakong ━━━"];
+  if (!BAKONG_API_TOKEN) {
+    lines.push("❌ មិនទាន់មាន Bakong Token ទេ។");
+  } else {
+    const { exp, daysLeft } = decodeJWTExpiry(BAKONG_API_TOKEN);
+    lines.push(`Token: <code>${esc(BAKONG_API_TOKEN.slice(0,10))}…</code>`);
+    if (exp) {
+      lines.push(`📅 Expire: <b>${exp.toISOString().slice(0,16)} UTC</b>`);
+      lines.push(`⏳ ស្ថានភាព: ${daysStatus(daysLeft)}`);
+    } else {
+      lines.push("📅 Expire: <b>មិនអាចបំបែក JWT បាន</b>");
+    }
+  }
+  lines.push("\n━━━ 📧 Dropmail ━━━");
+  if (!DROPMAIL_API_TOKEN) {
+    lines.push("❌ មិនទាន់មាន Dropmail Token ទេ។");
+  } else {
+    const m = DROPMAIL_API_TOKEN.slice(0,6) + "…" + DROPMAIL_API_TOKEN.slice(-4);
+    lines.push(`Token: <code>${esc(m)}</code>`);
+    if (DROPMAIL_TOKEN_EXPIRY) lines.push(`📅 Expire: <b>${esc(DROPMAIL_TOKEN_EXPIRY)}</b>`);
+  }
+  return sendMsg(ctx, chatId, lines.join("\n"), BAKONG_SUBMENU_KB);
+}
+
+// ── 25. Startup ───────────────────────────────────────────────────────────────
 function loadAll() {
-  settings  = readJSON(FILES.settings, {});
-  accounts  = readJSON(FILES.accounts, { account_types: {}, prices: {} });
-  users     = readJSON(FILES.users, {});
-  purchases = readJSON(FILES.purchases, []);
+  settings       = readJSON(FILES.settings, {});
+  accounts_data  = readJSON(FILES.accounts, { accounts: [], account_types: {}, prices: {} });
+  known_users    = readJSON(FILES.users, {});
+  purchases      = readJSON(FILES.purchases, []);
+  const stored   = readJSON(FILES.sessions, {});
+  for (const [k, v] of Object.entries(stored)) user_sessions[Number(k)] = v;
 
-  const storedSessions = readJSON(FILES.sessions, {});
-  for (const [k, v] of Object.entries(storedSessions)) sessions[Number(k)] = v;
+  // Restore settings
+  const pm = getSetting("PAYMENT_NAME");       if (pm)   PAYMENT_NAME = pm;
+  const mm = getSetting("MAINTENANCE_MODE");   if (mm)   MAINTENANCE_MODE = mm === "true";
+  const ch = getSetting("TELEGRAM_CHANNEL_ID"); if (ch) CHANNEL_ID = ch;
+  const bt = getSetting("BAKONG_API_TOKEN");   if (bt)   { BAKONG_API_TOKEN = bt; BAKONG_TOKEN = bt; }
+  const br = getSetting("BAKONG_RELAY_TOKEN"); if (br)   { BAKONG_RELAY_TOKEN = br; BAKONG_TOKEN = br; }
+  const ea = getSetting("EXTRA_ADMIN_IDS");    if (ea)   { try { EXTRA_ADMIN_IDS = new Set(JSON.parse(ea).map(Number)); } catch {} }
+  const dm = getSetting("DROPMAIL_API_TOKEN"); if (dm)   DROPMAIL_API_TOKEN = dm;
+  const de = getSetting("DROPMAIL_TOKEN_EXPIRY"); if (de) DROPMAIL_TOKEN_EXPIRY = de;
 
-  const couponCount = Object.values(accounts.account_types).reduce((s, a) => s + a.length, 0);
-  console.log(`[INFO] Loaded: ${couponCount} coupons, ${Object.keys(users).length} users, ${purchases.length} purchases`);
+  const couponCount = Object.values(accounts_data.account_types).reduce((s, a) => s + a.length, 0);
+  console.log(`[INFO] Loaded: ${couponCount} coupons, ${Object.keys(known_users).length} users, ${purchases.length} purchases`);
 }
 
-// Graceful shutdown
 process.once("SIGINT",  () => bot.stop("SIGINT"));
 process.once("SIGTERM", () => bot.stop("SIGTERM"));
 
@@ -885,7 +1230,5 @@ loadAll();
 bot.launch().then(async () => {
   const me = await bot.telegram.getMe();
   console.log(`[INFO] Bot ready: @${me.username}`);
-  try {
-    await bot.telegram.sendMessage(ADMIN_ID, "✅ <b>Bot ចាប់ផ្ដើម! (JavaScript)</b>", { parse_mode: "HTML" });
-  } catch {}
+  try { await bot.telegram.sendMessage(ADMIN_ID, "✅ <b>Bot ចាប់ផ្ដើម! (JavaScript — 100% GitHub structure)</b>", { parse_mode: "HTML" }); } catch {}
 });
