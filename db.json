@@ -1,11 +1,6 @@
 {
   "accounts": {
     "account_types": {
-      "1": [
-        {
-          "code": "U"
-        }
-      ],
       "Y": [
         {
           "code": "09k39yev8c@spymail.one"
@@ -16,7 +11,6 @@
       ]
     },
     "prices": {
-      "1": 1,
       "Y": 0.01
     }
   },
