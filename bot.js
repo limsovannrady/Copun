@@ -140,7 +140,10 @@ const BROADCAST_CONFIRM_KB = Markup.keyboard([
 
 
 const CHECK_PAYMENT_INLINE = Markup.inlineKeyboard([
-  [Markup.button.callback("🚫 បោះបង់", "cancel_purchase")],
+  [
+    Markup.button.callback("🚫 បោះបង់", "cancel_purchase"),
+    Markup.button.callback("✅ បានបង់ប្រាក់", "check_payment"),
+  ],
 ]);
 
 const mainKb = uid => isAdmin(uid) ? ADMIN_KB : Markup.removeKeyboard();
@@ -719,6 +722,28 @@ bot.on("callback_query", async ctx => {
       delete user_sessions[uid]; saveSessions();
     }
     await showAccountSelection(ctx, chatId);
+    return;
+  }
+
+  // ── check_payment (manual verify) ────────────────────────────────────────
+  if (data === "check_payment") {
+    const sess = user_sessions[uid];
+    const txnId = sess?.transaction_id;
+    if (!txnId) {
+      await ctx.answerCbQuery("⚠️ រកមិនឃើញការទូទាត់", { show_alert: true });
+      return;
+    }
+    await ctx.answerCbQuery("⏳ កំពុងពិនិត្យ…");
+    try {
+      const { paid, data: pd } = await checkKhpayStatus(txnId);
+      if (paid) {
+        await deliverAccounts(ctx, chatId, uid, sess, pd);
+      } else {
+        await ctx.answerCbQuery("❌ មិនទាន់បង់ប្រាក់ទេ", { show_alert: true });
+      }
+    } catch (e) {
+      await ctx.answerCbQuery("❌ មានបញ្ហា: " + e.message, { show_alert: true });
+    }
     return;
   }
 
