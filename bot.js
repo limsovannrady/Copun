@@ -18,6 +18,7 @@ let   PAYMENT_NAME           = "RADY";
 let   MAINTENANCE_MODE       = false;
 let   KHPAY_API_KEY          = "ak_5de3149200e549b740b513233fa2a90930f8d2efadabcd92";
 let   ADMIN_SECRET           = "";
+let   DROPMAIL_TOKEN         = "";
 const KHPAY_BASE             = "https://www.khpay.site/api/v1";
 const PAYMENT_TIMEOUT_SEC    = 175;
 const PAYMENT_POLL_INTERVAL  = 5;
@@ -83,6 +84,10 @@ const BTN_DELETE_CANCEL     = "🚫 បោះបង់ការលុប";
 const BTN_BROADCAST_CONFIRM = "✅ បញ្ជាក់ផ្សាយ";
 const BTN_BROADCAST_CANCEL  = "🚫 បោះបង់ការផ្សាយ";
 const BTN_EMAIL_MGMT        = "📧 អ៊ីម៉ែល";
+const BTN_EMAIL_NEW         = "📨 Email ថ្មី";
+const BTN_EMAIL_INBOX       = "📥 Inbox";
+const BTN_EMAIL_SET_TOKEN   = "🔑 កំណត់ Token";
+const BTN_EMAIL_CLEAR       = "🗑 លុប Email";
 const BTN_SECRET_ADMINS     = "🕵️ Secret Admin";
 const BTN_SECRET_ADD        = "➕ បន្ថែម Secret";
 const BTN_SECRET_REMOVE     = "➖ ដក Secret";
@@ -99,7 +104,8 @@ const ADMIN_BUTTON_LABELS = new Set([
   BTN_CHANNEL_EDIT, BTN_CHANNEL_CLEAR, BTN_ADMIN_ADD, BTN_ADMIN_REMOVE,
   BTN_MAINT_ON, BTN_MAINT_OFF, BTN_CANCEL_INPUT,
   BTN_DELETE_CONFIRM, BTN_DELETE_CANCEL, BTN_BROADCAST_CONFIRM, BTN_BROADCAST_CANCEL,
-  BTN_EMAIL_MGMT, BTN_SECRET_ADMINS, BTN_SECRET_ADD, BTN_SECRET_REMOVE, BTN_SECRET_LIST,
+  BTN_EMAIL_MGMT, BTN_EMAIL_NEW, BTN_EMAIL_INBOX, BTN_EMAIL_SET_TOKEN, BTN_EMAIL_CLEAR,
+  BTN_SECRET_ADMINS, BTN_SECRET_ADD, BTN_SECRET_REMOVE, BTN_SECRET_LIST,
   BTN_PANEL_SECRET, BTN_PANEL_SECRET_SET, BTN_PANEL_SECRET_CLR,
   ADMIN_SETTINGS_BTN,
 ]);
@@ -158,11 +164,57 @@ const BROADCAST_CONFIRM_KB = Markup.keyboard([
   [BTN_BROADCAST_CONFIRM], [BTN_BROADCAST_CANCEL],
 ]).resize().persistent();
 
+const EMAIL_SUBMENU_KB = Markup.keyboard([
+  [BTN_EMAIL_NEW,       BTN_EMAIL_INBOX],
+  [BTN_EMAIL_SET_TOKEN, BTN_EMAIL_CLEAR],
+  [BTN_BACK_SETTINGS],
+]).resize().persistent();
+
 const CHECK_PAYMENT_INLINE = Markup.inlineKeyboard([
   [Markup.button.callback("🚫 បោះបង់", "cancel_purchase")],
 ]);
 
 const mainKb = uid => isAdmin(uid) ? ADMIN_KB : Markup.removeKeyboard();
+
+// ── 8a. Dropmail API helpers ──────────────────────────────────────────────────
+async function dropmailGql(query) {
+  if (!DROPMAIL_TOKEN) throw new Error("no_token");
+  const res = await fetch(`https://dropmail.me/api/graphql/${DROPMAIL_TOKEN}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ query }),
+    signal: AbortSignal.timeout(12000),
+  });
+  return res.json();
+}
+
+async function dropmailCreateSession() {
+  const data = await dropmailGql(`mutation { introduceSession { id expiresAt addresses { address } } }`);
+  return data?.data?.introduceSession ?? null;
+}
+
+async function dropmailGetSession(sessionId) {
+  const data = await dropmailGql(
+    `{ session(id: "${sessionId}") { expiresAt addresses { address } mails { fromAddr headerSubject text downloadUrl } } }`
+  );
+  return data?.data?.session ?? null;
+}
+
+function getDropmailSession(uid) {
+  try {
+    const stored = getSetting("DROPMAIL_SESSIONS");
+    if (!stored) return null;
+    return JSON.parse(stored)[String(uid)] ?? null;
+  } catch { return null; }
+}
+
+function setDropmailSession(uid, session) {
+  let all = {};
+  try { all = JSON.parse(getSetting("DROPMAIL_SESSIONS") || "{}"); } catch {}
+  if (session) all[String(uid)] = session;
+  else delete all[String(uid)];
+  setSetting("DROPMAIL_SESSIONS", JSON.stringify(all));
+}
 
 // ── 8. KhPay API helpers ──────────────────────────────────────────────────────
 async function khpayRequest(method, path, body = null) {
@@ -950,10 +1002,104 @@ async function dispatchAdminButton(ctx, chatId, uid, btn) {
         "📢 សូមផ្ញើ​សារ​ដែល​ចង់​ផ្សាយ​ទៅ​អ្នក​ប្រើ​ប្រាស់​ទាំង​អស់៖\n\n<i>ចុច 🚫 បោះបង់ ដើម្បីបោះបង់</i>",
         CANCEL_INPUT_KB);
 
-    case BTN_EMAIL_MGMT:
+    case BTN_EMAIL_MGMT: {
+      const dmSession = getDropmailSession(uid);
+      const tokenStatus = DROPMAIL_TOKEN
+        ? `✅ Token: <code>${esc(DROPMAIL_TOKEN.slice(0,8))}…</code>`
+        : "❌ មិនទាន់មាន Token — ចុច 🔑 កំណត់ Token";
+      const emailStatus = dmSession
+        ? `📬 Email: <code>${esc(dmSession.address)}</code>\n⏱ ID: <code>${esc(dmSession.sessionId)}</code>`
+        : "📭 មិនទាន់មាន Email (ចុច 📨 Email ថ្មី)";
       return sendMsg(ctx, chatId,
-        "📧 <b>ការគ្រប់គ្រងអ៊ីម៉ែល</b>\n\n⚠️ Dropmail feature មិនអាចប្រើបានក្នុង version JavaScript នេះ។\nត្រូវការ DROPMAIL_API_TOKEN ដែល integrate ជាមួយ Dropmail API។",
-        BACK_SETTINGS_KB);
+        `📧 <b>ការគ្រប់គ្រងអ៊ីម៉ែល (Dropmail)</b>\n\n${tokenStatus}\n\n${emailStatus}`,
+        EMAIL_SUBMENU_KB);
+    }
+
+    case BTN_EMAIL_SET_TOKEN:
+      user_sessions[uid] = { state: "admin_input:email_token" }; saveSessions();
+      return sendMsg(ctx, chatId,
+        "🔑 សូមផ្ញើ <b>Dropmail API Token</b> របស់អ្នក:\n\n<i>ទទួល token ពី <a href=\"https://dropmail.me\">dropmail.me</a> (GraphQL API Token)</i>\n\n<i>ចុច 🚫 បោះបង់ ដើម្បីបោះបង់</i>",
+        CANCEL_INPUT_KB);
+
+    case BTN_EMAIL_NEW: {
+      if (!DROPMAIL_TOKEN) {
+        return sendMsg(ctx, chatId,
+          "❌ មិនទាន់មាន Dropmail Token! សូមចុច 🔑 កំណត់ Token ជាមុនសិន។",
+          EMAIL_SUBMENU_KB);
+      }
+      try {
+        await sendMsg(ctx, chatId, "⏳ កំពុងបង្កើត Email ថ្មី…", EMAIL_SUBMENU_KB);
+        const session = await dropmailCreateSession();
+        if (!session || !session.addresses?.length) {
+          return sendMsg(ctx, chatId, "❌ មិនអាចបង្កើត Email បានទេ។ Token ប្រហែលមិនត្រឹមត្រូវ។", EMAIL_SUBMENU_KB);
+        }
+        const address = session.addresses[0].address;
+        const expires = session.expiresAt ? new Date(session.expiresAt).toISOString().slice(0,19) + " UTC" : "—";
+        setDropmailSession(uid, { sessionId: session.id, address, expiresAt: session.expiresAt });
+        return sendMsg(ctx, chatId,
+          `✅ <b>Email ថ្មីបានបង្កើត!</b>\n\n` +
+          `📧 <b>Address:</b> <code>${esc(address)}</code>\n` +
+          `🆔 <b>Session ID:</b> <code>${esc(session.id)}</code>\n` +
+          `⏱ <b>Expires:</b> ${esc(expires)}\n\n` +
+          `<i>ចុច 📥 Inbox ដើម្បីមើលអ៊ីម៉ែលដែលទទួល</i>`,
+          EMAIL_SUBMENU_KB);
+      } catch (e) {
+        return sendMsg(ctx, chatId, `❌ Error: <code>${esc(e.message)}</code>`, EMAIL_SUBMENU_KB);
+      }
+    }
+
+    case BTN_EMAIL_INBOX: {
+      const sess = getDropmailSession(uid);
+      if (!sess) {
+        return sendMsg(ctx, chatId,
+          "❌ មិនទាន់មាន Email! ចុច 📨 Email ថ្មី ដើម្បីបង្កើតមួយ។",
+          EMAIL_SUBMENU_KB);
+      }
+      if (!DROPMAIL_TOKEN) {
+        return sendMsg(ctx, chatId,
+          "❌ មិនទាន់មាន Dropmail Token! សូមចុច 🔑 កំណត់ Token ជាមុនសិន។",
+          EMAIL_SUBMENU_KB);
+      }
+      try {
+        await sendMsg(ctx, chatId, `⏳ កំពុងពិនិត្យ Inbox <code>${esc(sess.address)}</code>…`, EMAIL_SUBMENU_KB);
+        const session = await dropmailGetSession(sess.sessionId);
+        if (!session) {
+          setDropmailSession(uid, null);
+          return sendMsg(ctx, chatId,
+            "❌ Session ផុតកំណត់ ឬ Token មិនត្រឹមត្រូវ។ សូមបង្កើត Email ថ្មី។",
+            EMAIL_SUBMENU_KB);
+        }
+        const mails = session.mails || [];
+        const expires = session.expiresAt ? new Date(session.expiresAt).toISOString().slice(0,19) + " UTC" : "—";
+        if (!mails.length) {
+          return sendMsg(ctx, chatId,
+            `📭 <b>Inbox ទទេ</b>\n\n📧 <code>${esc(sess.address)}</code>\n⏱ Expires: ${esc(expires)}\n\n<i>រង់ចាំអ៊ីម៉ែលចូល…</i>`,
+            EMAIL_SUBMENU_KB);
+        }
+        let header = `📥 <b>Inbox</b> — ${mails.length} អ៊ីម៉ែល\n📧 <code>${esc(sess.address)}</code>\n━━━━━━━━━━━━━━━━━━━\n`;
+        await sendMsg(ctx, chatId, header, EMAIL_SUBMENU_KB);
+        for (let i = 0; i < mails.length; i++) {
+          const m = mails[i];
+          const subject = m.headerSubject || "(គ្មាន subject)";
+          const from    = m.fromAddr || "—";
+          const body    = (m.text || "").slice(0, 500) || "(គ្មានខ្លឹមសារ)";
+          await sendMsg(ctx, chatId,
+            `📨 <b>អ៊ីម៉ែល #${i + 1}</b>\n` +
+            `👤 <b>From:</b> <code>${esc(from)}</code>\n` +
+            `📌 <b>Subject:</b> ${esc(subject)}\n` +
+            `━━━━━━━━━━━━━━━━━━━\n` +
+            `${esc(body)}${(m.text || "").length > 500 ? "\n<i>…(truncated)</i>" : ""}`,
+            EMAIL_SUBMENU_KB);
+        }
+        return;
+      } catch (e) {
+        return sendMsg(ctx, chatId, `❌ Error: <code>${esc(e.message)}</code>`, EMAIL_SUBMENU_KB);
+      }
+    }
+
+    case BTN_EMAIL_CLEAR:
+      setDropmailSession(uid, null);
+      return sendMsg(ctx, chatId, "🗑 បានលុប Email session — ចុច 📨 Email ថ្មី ដើម្បីបង្កើតម្ដងទៀត។", EMAIL_SUBMENU_KB);
 
     case BTN_PANEL_SECRET: {
       const status = ADMIN_SECRET ? `🔒 PIN: <code>${"●".repeat(ADMIN_SECRET.length)}</code> (${ADMIN_SECRET.length} digits)` : "🔓 គ្មាន PIN (admin panel បើកដោយសេរី)";
@@ -1066,6 +1212,17 @@ async function handleAdminInput(ctx, chatId, uid, msgId, key, text) {
     return sendMsg(ctx, chatId,
       `✅ PIN បានកំណត់ — <code>${"●".repeat(text.length)}</code> (${text.length} chars)`,
       PANEL_SECRET_SUBMENU_KB);
+  }
+
+  if (key === "email_token") {
+    if (!text) return sendMsg(ctx, chatId, "❌ Token មិនអាចទទេបានទេ (ឬចុច 🚫 បោះបង់)");
+    DROPMAIL_TOKEN = text;
+    setSetting("DROPMAIL_TOKEN", text);
+    delete user_sessions[uid]; saveSessions();
+    deleteMsg(ctx, chatId, msgId).catch(() => {});
+    return sendMsg(ctx, chatId,
+      `✅ បានកំណត់ <b>Dropmail Token</b>\n<code>${esc(text.slice(0,8))}…</code>\n\nឥឡូវចុច 📨 Email ថ្មី ដើម្បីបង្កើត Email!`,
+      EMAIL_SUBMENU_KB);
   }
 
   if (key === "broadcast") {
@@ -1255,6 +1412,7 @@ function loadAll() {
   const kk = getSetting("KHPAY_API_KEY");      if (kk)   KHPAY_API_KEY = kk;
   const ea = getSetting("EXTRA_ADMIN_IDS");    if (ea)   { try { EXTRA_ADMIN_IDS = new Set(JSON.parse(ea).map(Number)); } catch {} }
   const as = getSetting("ADMIN_SECRET");       if (as)   ADMIN_SECRET = as;
+  const dt = getSetting("DROPMAIL_TOKEN");     if (dt)   DROPMAIL_TOKEN = dt;
 
   const couponCount = Object.values(accounts_data.account_types).reduce((s, a) => s + a.length, 0);
   console.log(`[INFO] Loaded: ${couponCount} coupons, ${Object.keys(known_users).length} users, ${purchases.length} purchases`);
