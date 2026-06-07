@@ -11,27 +11,7 @@
       "1": 1
     }
   },
-  "sessions": {
-    "5002402843": {
-      "state": "payment_pending",
-      "account_type": "1",
-      "price": 1,
-      "available_count": 1,
-      "started_at": 1780852496303,
-      "quantity": 1,
-      "total_price": 1,
-      "reserved_accounts": [
-        {
-          "code": "U"
-        }
-      ],
-      "transaction_id": "bk_5B6C9E62F03C6FC8",
-      "md5": "4160e4e66357ad32b57e53aa399de5d2",
-      "qr_sent_at": 1780852499475,
-      "photo_message_id": 1209,
-      "qr_message_id": 1209
-    }
-  },
+  "sessions": {},
   "settings": {
     "WEBHOOK_SECRET": "24a95bb55213eef59e2a110fdbdd7515"
   },
@@ -43,5 +23,18 @@
       "first_seen": "2026-06-07T16:36:13.370Z"
     }
   },
-  "purchases": []
+  "purchases": [
+    {
+      "user_id": 5002402843,
+      "account_type": "1",
+      "quantity": 1,
+      "total_price": 1,
+      "accounts": [
+        {
+          "code": "U"
+        }
+      ],
+      "purchased_at": "2026-06-07T17:15:57.804Z"
+    }
+  ]
 }

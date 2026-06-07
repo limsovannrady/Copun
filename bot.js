@@ -964,7 +964,7 @@ bot.on("text", async ctx => {
 
   // Default fallback
   if (user_sessions[uid]?.state === "payment_pending") {
-    return sendMsg(ctx, chatId, "⏳ <b>សូមបញ្ចប់ការទូទាត់ QR ជាមុនសិន</b>\nឬចុច <b>🚫 បោះបង់</b> ដើម្បីបោះបង់");
+    return sendMsg(ctx, chatId, "⏳ <b>សូមបញ្ចប់ការទូទាត់ QR ជាមុនសិន</b>\nឬចុច <b>🚫 បោះបង់</b> ដើម្បីបោះបង់", CHECK_PAYMENT_INLINE);
   }
   await showAccountSelection(ctx, chatId);
 });
