@@ -21,10 +21,9 @@ Replit Workflow: **Telegram Bot** → `node bot.js`
 
 ```
 workspace/
-  bot.js          ← main bot (single file, root level)
+  bot.js      ← main bot (single file, root level)
+  db.json     ← all data: accounts, sessions, settings, users, purchases
   package.json
-  data/
-    db.json       ← all data: accounts, sessions, settings, users, purchases
 ```
 
 ## Environment
@@ -35,7 +34,7 @@ workspace/
 
 - Admin ID: `5002402843` (hardcoded in bot.js)
 - Admin sees `⚙️កំណត់` button in keyboard
-- All settings stored in `data/db.json`
+- All settings stored in `db.json`
 
 ## Payment
 

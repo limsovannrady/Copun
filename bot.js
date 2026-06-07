@@ -22,11 +22,8 @@ const KHPAY_BASE             = "https://www.khpay.site/api/v1";
 const PAYMENT_TIMEOUT_SEC    = 175;
 const PAYMENT_POLL_INTERVAL  = 5;
 
-// ── 2. Data directory ─────────────────────────────────────────────────────────
-const DATA_DIR = path.join(__dirname, "data");
-if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
-
-const DB_FILE = path.join(DATA_DIR, "db.json");
+// ── 2. DB file ────────────────────────────────────────────────────────────────
+const DB_FILE = path.join(__dirname, "db.json");
 
 // ── 3. In-memory state ────────────────────────────────────────────────────────
 let accounts_data  = { accounts: [], account_types: {}, prices: {} };
