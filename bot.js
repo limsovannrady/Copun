@@ -24,6 +24,8 @@ const PAYMENT_POLL_INTERVAL = 5;
 const WEBHOOK_PORT  = 5000;
 let WEBHOOK_SECRET  = "";
 let WEBHOOK_URL     = "";
+let TG_WEBHOOK_URL  = "";
+let TG_WEBHOOK_SECRET = "";
 
 const DB_FILE = path.join(__dirname, "db.json");
 let accounts_data = { account_types: {}, prices: {} };
@@ -59,6 +61,9 @@ const BTN_CHANNEL           = "📢 Channel ID";
 const BTN_ADMINS            = "👑 គ្រប់គ្រង Admin";
 const BTN_MAINTENANCE       = "🛠 Maintenance Mode";
 const BTN_BROADCAST         = "📢 ផ្សាយព័ត៌មាន";
+const BTN_WEBHOOK           = "🔗 Webhook";
+const BTN_WEBHOOK_SET       = "✅ ចុះឈ្មោះ Webhook";
+const BTN_WEBHOOK_DEL       = "🗑 លុប Webhook";
 const BTN_BACK_SETTINGS     = "⬅️";
 const BTN_KHPAY_KEY_EDIT    = "✏️ ប្តូរ KhPay API Key";
 const BTN_KHPAY_INFO        = "📊 ព័ត៌មាន KhPay";
@@ -77,11 +82,12 @@ const ADMIN_SETTINGS_BTN    = "⚙️កំណត់";
 
 const ADMIN_BUTTON_LABELS = new Set([
   BTN_ADD_ACCOUNT, BTN_DELETE_TYPE, BTN_STOCK, BTN_USERS, BTN_BUYERS,
-  BTN_KHPAY, BTN_CHANNEL, BTN_ADMINS, BTN_MAINTENANCE, BTN_BROADCAST,
+  BTN_KHPAY, BTN_CHANNEL, BTN_ADMINS, BTN_MAINTENANCE, BTN_BROADCAST, BTN_WEBHOOK,
   BTN_BACK_SETTINGS, BTN_KHPAY_KEY_EDIT, BTN_KHPAY_INFO,
   BTN_CHANNEL_EDIT, BTN_CHANNEL_CLEAR, BTN_ADMIN_ADD, BTN_ADMIN_REMOVE,
   BTN_MAINT_ON, BTN_MAINT_OFF, BTN_CANCEL_INPUT,
   BTN_DELETE_CONFIRM, BTN_DELETE_CANCEL, BTN_BROADCAST_CONFIRM, BTN_BROADCAST_CANCEL,
+  BTN_WEBHOOK_SET, BTN_WEBHOOK_DEL,
   ADMIN_SETTINGS_BTN,
 ]);
 
@@ -93,6 +99,7 @@ const ADMIN_SETTINGS_KB = Markup.keyboard([
   [BTN_USERS,       BTN_KHPAY],
   [BTN_CHANNEL,     BTN_ADMINS],
   [BTN_BROADCAST,   BTN_MAINTENANCE],
+  [BTN_WEBHOOK],
 ]).resize().persistent();
 const CANCEL_INPUT_KB  = Markup.keyboard([[BTN_CANCEL_INPUT]]).resize().persistent();
 const ADD_ACCOUNT_KB   = Markup.keyboard([[BTN_BACK_SETTINGS]]).resize().persistent();
@@ -102,6 +109,7 @@ const CHANNEL_SUBMENU_KB = Markup.keyboard([[BTN_CHANNEL_EDIT, BTN_CHANNEL_CLEAR
 const ADMINS_SUBMENU_KB  = Markup.keyboard([[BTN_ADMIN_ADD, BTN_ADMIN_REMOVE], [BTN_BACK_SETTINGS]]).resize().persistent();
 const MAINTENANCE_SUBMENU_KB = Markup.keyboard([[BTN_MAINT_ON, BTN_MAINT_OFF], [BTN_BACK_SETTINGS]]).resize().persistent();
 const BROADCAST_CONFIRM_KB   = Markup.keyboard([[BTN_BROADCAST_CONFIRM], [BTN_BROADCAST_CANCEL]]).resize().persistent();
+const WEBHOOK_SUBMENU_KB     = Markup.keyboard([[BTN_WEBHOOK_SET, BTN_WEBHOOK_DEL], [BTN_BACK_SETTINGS]]).resize().persistent();
 const CHECK_PAYMENT_INLINE   = Markup.inlineKeyboard([[
   Markup.button.callback("🚫 បោះបង់", "cancel_purchase"),
   Markup.button.callback("✅ បានបង់ប្រាក់", "check_payment"),
@@ -271,8 +279,31 @@ async function startPaymentForSession(ctx, chatId, userId, session, cbQuery = nu
 function startWebhookServer() {
   const server = http.createServer((req, res) => {
     const url = new URL(req.url, `http://localhost`);
+
+    // Health check
     if (req.method === "GET" && url.pathname === "/") { res.writeHead(200); res.end("OK"); return; }
-    if (req.method !== "POST" || url.pathname !== "/khpay-webhook") { res.writeHead(404); res.end(); return; }
+
+    if (req.method !== "POST") { res.writeHead(404); res.end(); return; }
+
+    // ── Telegram webhook (/telegram) ─────────────────────────────────────────
+    if (url.pathname === "/telegram") {
+      const tgSecret = req.headers["x-telegram-bot-api-secret-token"] || "";
+      if (TG_WEBHOOK_SECRET && tgSecret !== TG_WEBHOOK_SECRET) {
+        console.warn("[TG Webhook] Rejected: bad secret");
+        res.writeHead(403); res.end(); return;
+      }
+      let body = "";
+      req.on("data", chunk => { body += chunk; });
+      req.on("end", async () => {
+        res.writeHead(200); res.end("OK");
+        try { await bot.handleUpdate(JSON.parse(body)); }
+        catch (e) { console.warn("[TG Webhook] handleUpdate error:", e.message); }
+      });
+      return;
+    }
+
+    // ── KhPay webhook (/khpay-webhook) ───────────────────────────────────────
+    if (url.pathname !== "/khpay-webhook") { res.writeHead(404); res.end(); return; }
     if (url.searchParams.get("secret") !== WEBHOOK_SECRET) { console.warn("[Webhook] Rejected: invalid secret"); res.writeHead(403); res.end(); return; }
     let body = "";
     req.on("data", chunk => { body += chunk; });
@@ -297,7 +328,12 @@ function startWebhookServer() {
       } catch (e) { console.warn("[Webhook] Error processing payload:", e.message); }
     });
   });
-  server.listen(WEBHOOK_PORT, () => { console.log(`[Webhook] Server listening on port ${WEBHOOK_PORT}`); console.log(`[Webhook] URL: ${WEBHOOK_URL}`); });
+
+  server.listen(WEBHOOK_PORT, () => {
+    console.log(`[Webhook] Server on port ${WEBHOOK_PORT}`);
+    console.log(`[Webhook] KhPay URL: ${WEBHOOK_URL}`);
+    console.log(`[TG Webhook] URL:    ${TG_WEBHOOK_URL}`);
+  });
 }
 
 const _delivering = new Set();
@@ -702,6 +738,9 @@ async function dispatchAdminButton(ctx, chatId, uid, btn) {
     case BTN_BROADCAST:
       user_sessions[uid] = { state: "admin_input:broadcast" }; saveSessions();
       return sendMsg(ctx, chatId, "📢 សូមផ្ញើ​សារ​ដែល​ចង់​ផ្សាយ​ទៅ​អ្នក​ប្រើ​ប្រាស់​ទាំង​អស់៖\n\n<i>ចុច 🚫 បោះបង់ ដើម្បីបោះបង់</i>", CANCEL_INPUT_KB);
+    case BTN_WEBHOOK:   return sendWebhookInfo(ctx, chatId);
+    case BTN_WEBHOOK_SET: return registerTgWebhook(ctx, chatId);
+    case BTN_WEBHOOK_DEL: return deleteTgWebhook(ctx, chatId);
     default: return sendAdminSettingsMenu(ctx, chatId);
   }
 }
@@ -857,6 +896,53 @@ async function sendKhpayInfo(ctx, chatId) {
   } catch (e) { return sendMsg(ctx, chatId, `💰 <b>KhPay API Info</b>\n\n❌ Error: <code>${esc(e.message)}</code>`, KHPAY_SUBMENU_KB); }
 }
 
+async function sendWebhookInfo(ctx, chatId) {
+  try {
+    const info = await bot.telegram.getWebhookInfo();
+    const url  = info.url || "(មិនទាន់កំណត់)";
+    const pend = info.pending_update_count ?? 0;
+    const err  = info.last_error_message   || "—";
+    const errDate = info.last_error_date ? fmtKH(new Date(info.last_error_date * 1000).toISOString()) : "—";
+    const lines = [
+      "🔗 <b>Telegram Webhook Status</b>",
+      "━━━━━━━━━━━━━━━━━━━",
+      `📡 <b>URL:</b> <code>${esc(url)}</code>`,
+      `📨 <b>Pending updates:</b> ${pend}`,
+      `❌ <b>Last error:</b> ${esc(err)}`,
+      `🕐 <b>Error time:</b> ${errDate}`,
+      "━━━━━━━━━━━━━━━━━━━",
+      `🔑 <b>Webhook URL (ចុះឈ្មោះ):</b>`,
+      `<code>${esc(TG_WEBHOOK_URL)}</code>`,
+    ];
+    return sendMsg(ctx, chatId, lines.join("\n"), WEBHOOK_SUBMENU_KB);
+  } catch (e) {
+    return sendMsg(ctx, chatId, `🔗 <b>Webhook</b>\n\n❌ Error: <code>${esc(e.message)}</code>`, WEBHOOK_SUBMENU_KB);
+  }
+}
+
+async function registerTgWebhook(ctx, chatId) {
+  try {
+    await bot.telegram.setWebhook(TG_WEBHOOK_URL, {
+      secret_token: TG_WEBHOOK_SECRET,
+      allowed_updates: ["message", "callback_query", "channel_post"],
+    });
+    console.log(`[TG Webhook] Registered: ${TG_WEBHOOK_URL}`);
+    return sendMsg(ctx, chatId, `✅ <b>បានចុះឈ្មោះ Webhook</b>\n\n<code>${esc(TG_WEBHOOK_URL)}</code>`, WEBHOOK_SUBMENU_KB);
+  } catch (e) {
+    return sendMsg(ctx, chatId, `❌ <b>Webhook registration failed:</b>\n<code>${esc(e.message)}</code>`, WEBHOOK_SUBMENU_KB);
+  }
+}
+
+async function deleteTgWebhook(ctx, chatId) {
+  try {
+    await bot.telegram.deleteWebhook({ drop_pending_updates: false });
+    console.log("[TG Webhook] Deleted.");
+    return sendMsg(ctx, chatId, "🗑 <b>បានលុប Webhook</b>\n\nBot ត្រូវ restart ដើម្បីប្រើ long-polling។", WEBHOOK_SUBMENU_KB);
+  } catch (e) {
+    return sendMsg(ctx, chatId, `❌ <b>Delete failed:</b>\n<code>${esc(e.message)}</code>`, WEBHOOK_SUBMENU_KB);
+  }
+}
+
 async function recoverPendingSessions() {
   const pending = Object.entries(user_sessions).filter(([, s]) => s.state === "payment_pending");
   if (!pending.length) return;
@@ -886,6 +972,10 @@ function loadAll() {
   if (!whs) { whs = crypto.randomBytes(16).toString("hex"); setSetting("WEBHOOK_SECRET", whs); }
   WEBHOOK_SECRET = whs;
   WEBHOOK_URL    = `https://${process.env.REPLIT_DEV_DOMAIN || "localhost"}/khpay-webhook?secret=${WEBHOOK_SECRET}`;
+  let tgwhs = getSetting("TG_WEBHOOK_SECRET");
+  if (!tgwhs) { tgwhs = crypto.randomBytes(20).toString("hex"); setSetting("TG_WEBHOOK_SECRET", tgwhs); }
+  TG_WEBHOOK_SECRET = tgwhs;
+  TG_WEBHOOK_URL    = `https://${process.env.REPLIT_DEV_DOMAIN || "localhost"}/telegram`;
   const couponCount = Object.values(accounts_data.account_types).reduce((s, a) => s + a.length, 0);
   console.log(`[INFO] Loaded: ${couponCount} coupons, ${Object.keys(known_users).length} users, ${purchases.length} purchases`);
 }
@@ -922,19 +1012,30 @@ bot.catch((err, ctx) => {
   console.warn("[BotError]", desc);
 });
 
-process.once("SIGINT",  () => bot.stop("SIGINT"));
-process.once("SIGTERM", () => bot.stop("SIGTERM"));
+process.once("SIGINT",  () => { bot.stop("SIGINT");  });
+process.once("SIGTERM", () => { bot.stop("SIGTERM"); });
 
 loadAll();
-bot.launch();
+startWebhookServer();
 
 (async () => {
   try {
     const me = await bot.telegram.getMe();
     console.log(`[INFO] Bot ready: @${me.username}`);
-    try { await bot.telegram.sendMessage(ADMIN_ID, "✅ <b>Bot ចាប់ផ្ដើម! (JavaScript — 100% GitHub structure)</b>", { parse_mode: "HTML" }); } catch {}
-  } catch {}
+    // Register Telegram webhook automatically on startup
+    try {
+      await bot.telegram.setWebhook(TG_WEBHOOK_URL, {
+        secret_token: TG_WEBHOOK_SECRET,
+        allowed_updates: ["message", "callback_query", "channel_post"],
+      });
+      console.log(`[TG Webhook] ✅ Registered: ${TG_WEBHOOK_URL}`);
+    } catch (e) {
+      console.warn(`[TG Webhook] ⚠️ Could not register webhook: ${e.message}`);
+      console.warn("[TG Webhook] Bot falling back to long-polling...");
+      bot.launch();
+    }
+    try { await bot.telegram.sendMessage(ADMIN_ID, "✅ <b>Bot ចាប់ផ្ដើម! (Webhook mode 24/7)</b>", { parse_mode: "HTML" }); } catch {}
+  } catch (e) { console.warn("[ERROR] getMe failed:", e.message); }
   await recoverPendingSessions();
-  startWebhookServer();
   startPaymentWatchdog();
 })();

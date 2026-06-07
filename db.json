@@ -6,6 +6,9 @@
           "code": "09k39yev8c@spymail.one"
         },
         {
+          "code": "09k39yev8c@spymail.one"
+        },
+        {
           "code": "ajkpfcostuoqbp@dropmail.me"
         }
       ]
@@ -14,29 +17,10 @@
       "Y": 0.01
     }
   },
-  "sessions": {
-    "5002402843": {
-      "state": "payment_pending",
-      "account_type": "Y",
-      "price": 0.01,
-      "available_count": 1,
-      "started_at": 1780855957511,
-      "quantity": 1,
-      "total_price": 0.01,
-      "reserved_accounts": [
-        {
-          "code": "09k39yev8c@spymail.one"
-        }
-      ],
-      "transaction_id": "bk_F7AD8922868C3A20",
-      "md5": "2f2514fe681ca8fa3c8498a1b69a431a",
-      "qr_sent_at": 1780855961812,
-      "photo_message_id": 1333,
-      "qr_message_id": 1333
-    }
-  },
+  "sessions": {},
   "settings": {
-    "WEBHOOK_SECRET": "24a95bb55213eef59e2a110fdbdd7515"
+    "WEBHOOK_SECRET": "24a95bb55213eef59e2a110fdbdd7515",
+    "TG_WEBHOOK_SECRET": "0efdee793428c00558f756cd04e10210914ebfe0"
   },
   "users": {
     "7433145236": {
