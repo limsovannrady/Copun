@@ -11,7 +11,11 @@
       "1": 1
     }
   },
-  "sessions": {},
+  "sessions": {
+    "5002402843": {
+      "state": "admin_input:logo"
+    }
+  },
   "settings": {
     "WEBHOOK_SECRET": "24a95bb55213eef59e2a110fdbdd7515"
   },
