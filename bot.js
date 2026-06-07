@@ -165,40 +165,67 @@ async function khpayRequest(method, path, body = null) {
   try { return JSON.parse(text); } catch { return { success: false, error: text }; }
 }
 
-// Cache Bakong logo buffer in memory
-let _bakongLogoBuffer = null;
-async function getBakongLogo() {
-  if (_bakongLogoBuffer) return _bakongLogoBuffer;
-  try {
-    const res = await fetch("https://bakong.nbc.gov.kh/images/logo.png", { signal: AbortSignal.timeout(8000) });
-    if (res.ok) _bakongLogoBuffer = Buffer.from(await res.arrayBuffer());
-  } catch {}
-  return _bakongLogoBuffer;
-}
+async function generateKHQRCard(qr_string, amount, merchantName) {
+  const QR_SIZE  = 250;
+  const CARD_W   = 300;
+  const CARD_H   = 460;
+  const QR_X     = Math.round((CARD_W - QR_SIZE) / 2);
+  const QR_Y     = 168;
+  const ICON_R   = 22;
 
-async function generateBakongQR(qr_string) {
-  const QR_SIZE = 500;
+  const amtFormatted = Number(amount).toFixed(2).replace(".", ",");
+  const name = esc(String(merchantName || PAYMENT_NAME).slice(0, 30));
+
+  // 1. QR code PNG
   const qrBuffer = await QRCode.toBuffer(qr_string, {
     errorCorrectionLevel: "H",
     width: QR_SIZE,
-    margin: 2,
+    margin: 1,
     color: { dark: "#000000", light: "#ffffff" },
   });
 
-  const logo = await getBakongLogo();
-  if (!logo) return qrBuffer;
+  // 2. Card background SVG (header + text + divider)
+  const cardSvg = `<svg width="${CARD_W}" height="${CARD_H}" xmlns="http://www.w3.org/2000/svg">
+    <rect width="${CARD_W}" height="${CARD_H}" fill="white" rx="14" ry="14"/>
+    <rect width="${CARD_W}" height="66" fill="#C8111A" rx="14" ry="14"/>
+    <rect y="46" width="${CARD_W}" height="20" fill="#C8111A"/>
+    <text x="${CARD_W / 2}" y="44"
+      font-family="Arial Black,Impact,sans-serif"
+      font-size="27" font-weight="900" fill="white"
+      text-anchor="middle" letter-spacing="4">KHQR</text>
+    <text x="22" y="102"
+      font-family="Arial,sans-serif" font-size="15" fill="#444">${name}</text>
+    <text x="22" y="138" font-family="Arial,sans-serif" fill="#111">
+      <tspan font-size="24" font-weight="bold">${amtFormatted}</tspan>
+      <tspan font-size="13" fill="#888" dx="6" dy="-2">USD</tspan>
+    </text>
+    <line x1="15" y1="155" x2="${CARD_W - 15}" y2="155"
+      stroke="#ddd" stroke-width="1.5" stroke-dasharray="6,4"/>
+  </svg>`;
 
-  const logoSize  = Math.round(QR_SIZE * 0.22);
-  const pad       = Math.round(logoSize * 0.15 / 2);
-  const logoLayer = await sharp(logo)
-    .resize(logoSize, logoSize, { fit: "contain", background: { r: 255, g: 255, b: 255, alpha: 1 } })
-    .extend({ top: pad, bottom: pad, left: pad, right: pad,
-               background: { r: 255, g: 255, b: 255, alpha: 1 } })
+  const cardBg = await sharp(Buffer.from(cardSvg)).png().toBuffer();
+
+  // 3. Composite QR onto card
+  const withQR = await sharp(cardBg)
+    .composite([{ input: qrBuffer, top: QR_Y, left: QR_X }])
     .png()
     .toBuffer();
 
-  return sharp(qrBuffer)
-    .composite([{ input: logoLayer, gravity: "centre" }])
+  // 4. $ icon circle in centre of QR
+  const iconSvg = `<svg width="${ICON_R * 2}" height="${ICON_R * 2}" xmlns="http://www.w3.org/2000/svg">
+    <circle cx="${ICON_R}" cy="${ICON_R}" r="${ICON_R - 1}"
+      fill="white" stroke="#bbb" stroke-width="1.5"/>
+    <text x="${ICON_R}" y="${ICON_R + 8}"
+      font-family="Arial,sans-serif" font-size="21"
+      fill="#333" text-anchor="middle" font-weight="bold">$</text>
+  </svg>`;
+  const iconBuf = await sharp(Buffer.from(iconSvg)).png().toBuffer();
+
+  const iconTop  = QR_Y + Math.round(QR_SIZE / 2) - ICON_R;
+  const iconLeft = QR_X + Math.round(QR_SIZE / 2) - ICON_R;
+
+  return sharp(withQR)
+    .composite([{ input: iconBuf, top: iconTop, left: iconLeft }])
     .png()
     .toBuffer();
 }
@@ -214,7 +241,7 @@ async function createKhpayPayment(amount, note = "") {
       return { imgBuffer: null, transaction_id: null, error: data.error || "API error" };
     }
     const { transaction_id, qr: qr_string, expires_in, md5 } = data.data;
-    const imgBuffer = await generateBakongQR(qr_string);
+    const imgBuffer = await generateKHQRCard(qr_string, amount, note || PAYMENT_NAME);
     return { imgBuffer, transaction_id, md5: md5 ?? null, expires_in: expires_in ?? 180, error: null };
   } catch (e) {
     return { imgBuffer: null, transaction_id: null, error: e.message };
