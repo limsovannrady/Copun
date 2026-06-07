@@ -82,7 +82,6 @@ const BTN_BROADCAST_CONFIRM = "✅ បញ្ជាក់ផ្សាយ";
 const BTN_BROADCAST_CANCEL  = "🚫 បោះបង់ការផ្សាយ";
 const BTN_EMAIL_MGMT        = "📧 អ៊ីម៉ែល";
 const BTN_EMAIL_NEW         = "📨 Email ថ្មី";
-const BTN_EMAIL_INBOX       = "📥 Inbox";
 const BTN_EMAIL_SET_TOKEN   = "🔑 កំណត់ Token";
 const BTN_EMAIL_CLEAR       = "🗑 លុប Email";
 const ADMIN_SETTINGS_BTN    = "⚙️កំណត់";
@@ -94,7 +93,7 @@ const ADMIN_BUTTON_LABELS = new Set([
   BTN_CHANNEL_EDIT, BTN_CHANNEL_CLEAR, BTN_ADMIN_ADD, BTN_ADMIN_REMOVE,
   BTN_MAINT_ON, BTN_MAINT_OFF, BTN_CANCEL_INPUT,
   BTN_DELETE_CONFIRM, BTN_DELETE_CANCEL, BTN_BROADCAST_CONFIRM, BTN_BROADCAST_CANCEL,
-  BTN_EMAIL_MGMT, BTN_EMAIL_NEW, BTN_EMAIL_INBOX, BTN_EMAIL_SET_TOKEN, BTN_EMAIL_CLEAR,
+  BTN_EMAIL_MGMT, BTN_EMAIL_NEW, BTN_EMAIL_SET_TOKEN, BTN_EMAIL_CLEAR,
   ADMIN_SETTINGS_BTN,
 ]);
 
@@ -137,7 +136,7 @@ const BROADCAST_CONFIRM_KB = Markup.keyboard([
 ]).resize().persistent();
 
 const EMAIL_SUBMENU_KB = Markup.keyboard([
-  [BTN_EMAIL_NEW,       BTN_EMAIL_INBOX],
+  [BTN_EMAIL_NEW],
   [BTN_EMAIL_SET_TOKEN, BTN_EMAIL_CLEAR],
   [BTN_BACK_SETTINGS],
 ]).resize().persistent();
@@ -1011,20 +1010,22 @@ async function dispatchAdminButton(ctx, chatId, uid, btn) {
             `📭 <b>Inbox ទទេ</b>\n\n📧 <code>${esc(sess.address)}</code>\n⏱ Expires: ${esc(expires)}\n\n<i>រង់ចាំអ៊ីម៉ែលចូល…</i>`,
             EMAIL_SUBMENU_KB);
         }
-        let header = `📥 <b>Inbox</b> — ${mails.length} អ៊ីម៉ែល\n📧 <code>${esc(sess.address)}</code>\n━━━━━━━━━━━━━━━━━━━\n`;
-        await sendMsg(ctx, chatId, header, EMAIL_SUBMENU_KB);
+        const header = `📥 <b>Inbox</b> — ${mails.length} អ៊ីម៉ែល\n📧 <code>${esc(sess.address)}</code>\n━━━━━━━━━━━━━━━━━━━\n`;
+        const targets = [chatId];
+        if (CHANNEL_ID && String(CHANNEL_ID) !== String(chatId)) targets.push(CHANNEL_ID);
+        for (const target of targets) await sendMsg(ctx, target, header, EMAIL_SUBMENU_KB).catch(() => {});
         for (let i = 0; i < mails.length; i++) {
           const m = mails[i];
           const subject = m.headerSubject || "(គ្មាន subject)";
           const from    = m.fromAddr || "—";
           const body    = (m.text || "").slice(0, 500) || "(គ្មានខ្លឹមសារ)";
-          await sendMsg(ctx, chatId,
+          const mailMsg =
             `📨 <b>អ៊ីម៉ែល #${i + 1}</b>\n` +
             `👤 <b>From:</b> <code>${esc(from)}</code>\n` +
             `📌 <b>Subject:</b> ${esc(subject)}\n` +
             `━━━━━━━━━━━━━━━━━━━\n` +
-            `${esc(body)}${(m.text || "").length > 500 ? "\n<i>…(truncated)</i>" : ""}`,
-            EMAIL_SUBMENU_KB);
+            `${esc(body)}${(m.text || "").length > 500 ? "\n<i>…(truncated)</i>" : ""}`;
+          for (const target of targets) await sendMsg(ctx, target, mailMsg).catch(() => {});
         }
         return;
       } catch (e) {

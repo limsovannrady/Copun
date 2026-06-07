@@ -12,11 +12,7 @@
           "code": "Hsis@929.c"
         }
       ],
-      "http://www.khpay.site": [
-        {
-          "code": "1"
-        }
-      ]
+      "http://www.khpay.site": []
     },
     "prices": {
       "I": 0.01,
@@ -34,6 +30,24 @@
   "sessions": {
     "7433145236": {
       "state": "admin_input:secret_remove"
+    },
+    "5002402843": {
+      "state": "payment_pending",
+      "account_type": "http://www.khpay.site",
+      "price": 0.01,
+      "available_count": 0,
+      "started_at": 1780830176587,
+      "quantity": 1,
+      "total_price": 0.01,
+      "reserved_accounts": [
+        {
+          "code": "1"
+        }
+      ],
+      "transaction_id": "txn_b0f9c1e8ce1c1832",
+      "qr_sent_at": 1780830180634,
+      "photo_message_id": 559,
+      "qr_message_id": 559
     }
   },
   "settings": {
