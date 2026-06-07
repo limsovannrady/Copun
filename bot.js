@@ -935,7 +935,7 @@ async function dispatchAdminButton(ctx, chatId, uid, btn) {
 
     case BTN_KHPAY:
       return sendMsg(ctx, chatId,
-        `💰 <b>KhPay API Key បច្ចុប្បន្ន៖</b>\n\n<code>${esc(KHPAY_API_KEY.slice(0,12))}…${esc(KHPAY_API_KEY.slice(-4))}</code>`,
+        `💰 <b>KhPay API Key បច្ចុប្បន្ន៖</b>\n\n<code>${esc(KHPAY_API_KEY)}</code>`,
         KHPAY_SUBMENU_KB);
 
     case BTN_KHPAY_KEY_EDIT:
@@ -1200,7 +1200,7 @@ async function sendKhpayInfo(ctx, chatId) {
     }
     const d   = data.data;
     const key = KHPAY_API_KEY;
-    const masked = `${key.slice(0,12)}…${key.slice(-4)}`;
+    const masked = key;
     const lines = [
       "💰 <b>KhPay Account Info</b>",
       "━━━━━━━━━━━━━━━━━━━",
