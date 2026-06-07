@@ -33,7 +33,7 @@
       "account_type": "I",
       "price": 0.01,
       "available_count": 2,
-      "started_at": 1780830483180,
+      "started_at": 1780830644282,
       "quantity": 1,
       "total_price": 0.01,
       "reserved_accounts": [
@@ -41,10 +41,10 @@
           "code": "Iehs8eehw"
         }
       ],
-      "transaction_id": "txn_2aab9f1702cc5961",
-      "qr_sent_at": 1780830486512,
-      "photo_message_id": 592,
-      "qr_message_id": 592
+      "transaction_id": "bk_CC171F9C729E7DB4",
+      "qr_sent_at": 1780830647387,
+      "photo_message_id": 605,
+      "qr_message_id": 605
     }
   },
   "settings": {
@@ -52,7 +52,8 @@
     "TELEGRAM_CHANNEL_ID": "-1003756077815",
     "EXTRA_ADMIN_IDS": "[]",
     "DROPMAIL_TOKEN": "af_AQVqJFNtEb57OhqDSUSAq-URfd2Ii2mfMRuUdFrd",
-    "DROPMAIL_SESSIONS": "{\"5002402843\":{\"sessionId\":\"U2Vzc2lvbjoHTci7reVLGb-0ZZcQPHPK\",\"address\":\"alvxeldxt@10mail.org\",\"expiresAt\":\"2026-06-07T11:14:55+00:00\"}}"
+    "DROPMAIL_SESSIONS": "{\"5002402843\":{\"sessionId\":\"U2Vzc2lvbjq3nM3H43pDnLFeYiHJxvEe\",\"address\":\"kuvehefah1j2@10mail.xyz\",\"expiresAt\":\"2026-06-07T11:19:05+00:00\"}}",
+    "DROPMAIL_SEEN": "[\"cc8dab76e550366d9d9e5b2befe482b1\"]"
   },
   "users": {
     "7433145236": {

@@ -290,11 +290,11 @@ async function khpayRequest(method, path, body = null) {
 
 async function createKhpayPayment(amount, note = "") {
   try {
-    const data = await khpayRequest("POST", "/qr/generate", { amount, note: note || PAYMENT_NAME, payment_method: "bakong" });
+    const data = await khpayRequest("POST", "/bakong/generate", { amount, note: note || PAYMENT_NAME });
     if (!data.success) {
       return { imgBuffer: null, transaction_id: null, error: data.error || "API error" };
     }
-    const { transaction_id, qr_string, expires_in } = data.data;
+    const { transaction_id, qr: qr_string, expires_in } = data.data;
 
     // Render QR from qr_string locally (reliable, no extra fetch)
     const imgBuffer = await QRCode.toBuffer(qr_string, { errorCorrectionLevel: "M", width: 400, margin: 2 });
