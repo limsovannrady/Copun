@@ -246,11 +246,11 @@ async function pollEmailSessions() {
         const from    = m.fromAddr || "—";
         const body    = (m.text || "").slice(0, 800) || "(គ្មានខ្លឹមសារ)";
         const msg =
-          `📨 <b>Email ថ្មី!</b>\n` +
-          `📧 <b>To:</b> <code>${esc(sess.address)}</code>\n` +
-          `👤 <b>From:</b> <code>${esc(from)}</code>\n` +
-          `📌 <b>Subject:</b> ${esc(subject)}\n` +
-          `━━━━━━━━━━━━━━━━━━━\n` +
+          `📬 <b>អ៊ីម៉ែលថ្មីចូលមកដល់!</b>\n\n` +
+          `📧 <b>ទៅ:</b> <code>${esc(sess.address)}</code>\n` +
+          `👤 <b>ពី:</b> <code>${esc(from)}</code>\n` +
+          `📝 <b>ប្រធានបទ:</b> ${esc(subject)}\n\n` +
+          `────────────────────────────\n` +
           `${esc(body)}${(m.text || "").length > 800 ? "\n<i>…(truncated)</i>" : ""}`;
 
         await sendMsg(fakeCtx, channelTarget, msg).catch(() => {});

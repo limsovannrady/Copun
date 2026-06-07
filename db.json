@@ -3,6 +3,9 @@
     "account_types": {
       "I": [
         {
+          "code": "Iehs8eehw"
+        },
+        {
           "code": "Iddhsi"
         },
         {
@@ -27,24 +30,6 @@
   "sessions": {
     "7433145236": {
       "state": "admin_input:secret_remove"
-    },
-    "5002402843": {
-      "state": "payment_pending",
-      "account_type": "I",
-      "price": 0.01,
-      "available_count": 2,
-      "started_at": 1780830644282,
-      "quantity": 1,
-      "total_price": 0.01,
-      "reserved_accounts": [
-        {
-          "code": "Iehs8eehw"
-        }
-      ],
-      "transaction_id": "bk_CC171F9C729E7DB4",
-      "qr_sent_at": 1780830647387,
-      "photo_message_id": 605,
-      "qr_message_id": 605
     }
   },
   "settings": {
