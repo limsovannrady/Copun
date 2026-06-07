@@ -29,7 +29,7 @@ outputType = "console"
 
 [[workflows.workflow.tasks]]
 task = "shell.exec"
-args = "cd telegram-bot && node bot.js"
+args = "node bot.js"
 
 [agent]
 stack = "PNPM_WORKSPACE"
