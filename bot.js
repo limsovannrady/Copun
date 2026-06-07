@@ -308,8 +308,10 @@ async function checkKhpayStatus(transaction_id) {
   try {
     const data = await khpayRequest("GET", `/transactions/${transaction_id}`);
     if (!data.success) return { paid: false, status: "error", data: null };
-    const { status } = data.data;
-    return { paid: status === "paid", status, data: data.data };
+    const d = data.data;
+    const status = d.status ?? "";
+    const paid = status === "paid" || status === "success" || status === "completed" || !!d.paid_at;
+    return { paid, status, data: d };
   } catch (e) {
     console.warn("[WARN] checkKhpayStatus:", e.message);
     return { paid: false, status: "error", data: null };
@@ -463,45 +465,65 @@ async function startPaymentForSession(ctx, chatId, userId, session, cbQuery = nu
   user_sessions[userId] = session;
   saveSessions();
 
-  // Start polling loop
-  scheduleQRExpiry(ctx, chatId, userId, transaction_id, session.qr_sent_at);
   console.log(`[INFO] KhPay QR sent to user ${userId}: Amount $${session.total_price}, TxnID: ${transaction_id}`);
   return true;
 }
 
-function scheduleQRExpiry(ctx, chatId, userId, transaction_id, startedAt) {
-  const deadline = startedAt + PAYMENT_TIMEOUT_SEC * 1000;
+// ── Global payment watchdog (replaces per-session setInterval) ─────────────────
+let _watchdogTimer = null;
 
-  const interval = setInterval(async () => {
-    const sess = user_sessions[userId];
-    if (!sess || sess.state !== "payment_pending" || sess.transaction_id !== transaction_id) {
-      clearInterval(interval); return;
-    }
+function startPaymentWatchdog() {
+  if (_watchdogTimer) clearInterval(_watchdogTimer);
+  _watchdogTimer = setInterval(async () => {
+    try { await runPaymentWatchdog(); } catch (e) { console.warn("[Watchdog] error:", e.message); }
+  }, PAYMENT_POLL_INTERVAL * 1000);
+  console.log(`[Watchdog] Payment watchdog started (every ${PAYMENT_POLL_INTERVAL}s)`);
+}
 
-    const now = Date.now();
-    if (now >= deadline) {
-      clearInterval(interval);
-      // Expired
-      await deleteMsg(ctx, chatId, sess.photo_message_id);
-      const reserved = sess.reserved_accounts ?? [];
-      if (reserved.length && sess.account_type) {
-        accounts_data.account_types[sess.account_type] = [...reserved, ...(accounts_data.account_types[sess.account_type] ?? [])];
+async function runPaymentWatchdog() {
+  const pending = Object.entries(user_sessions).filter(([, s]) => s.state === "payment_pending");
+  if (!pending.length) return;
+
+  const fakeCtx = { telegram: bot.telegram };
+
+  for (const [uidStr, sess] of pending) {
+    const userId = Number(uidStr);
+    const { transaction_id, qr_sent_at, account_type, reserved_accounts = [] } = sess;
+
+    const elapsed = Date.now() - (qr_sent_at || 0);
+
+    if (elapsed >= PAYMENT_TIMEOUT_SEC * 1000) {
+      // Expired — return stock, notify user
+      console.log(`[Watchdog] Session expired for user ${userId}`);
+      if (reserved_accounts.length && account_type) {
+        accounts_data.account_types[account_type] = [
+          ...reserved_accounts, ...(accounts_data.account_types[account_type] ?? []),
+        ];
         saveAccounts();
       }
       delete user_sessions[userId]; saveSessions();
-      await sendMsg(ctx, chatId, "⌛ <b>QR Code បានផុតកំណត់</b>\n\nសូមបង្កើតការទិញម្ដងទៀត។");
-      await showAccountSelection(ctx, chatId);
-      return;
+      deleteMsg(fakeCtx, userId, sess.photo_message_id).catch(() => {});
+      await sendMsg(fakeCtx, userId, "⌛ <b>QR Code បានផុតកំណត់</b>\n\nសូមបង្កើតការទិញម្ដងទៀត។").catch(() => {});
+      await showAccountSelection(fakeCtx, userId).catch(() => {});
+      continue;
     }
 
-    // Check payment via KhPay API
-    const { paid, data: payData } = await checkKhpayStatus(transaction_id);
-    if (paid) {
-      clearInterval(interval);
+    // Check payment status
+    try {
+      const { paid, data: payData } = await checkKhpayStatus(transaction_id);
+      if (!paid) continue;
+
+      // Mark as delivering (idempotency guard)
       const cur = user_sessions[userId];
-      if (cur && cur.transaction_id === transaction_id) await deliverAccounts(ctx, chatId, userId, cur, payData);
+      if (!cur || cur.transaction_id !== transaction_id || cur.state !== "payment_pending") continue;
+      cur.state = "delivering";
+
+      console.log(`[Watchdog] Payment confirmed for user ${userId}: ${transaction_id}`);
+      await deliverAccounts(fakeCtx, userId, userId, cur, payData);
+    } catch (e) {
+      console.warn(`[Watchdog] Status check error for ${transaction_id}:`, e.message);
     }
-  }, PAYMENT_POLL_INTERVAL * 1000);
+  }
 }
 
 async function deliverAccounts(ctx, chatId, userId, session, paymentData = null) {
@@ -1371,52 +1393,14 @@ async function sendKhpayInfo(ctx, chatId) {
 async function recoverPendingSessions() {
   const pending = Object.entries(user_sessions).filter(([, s]) => s.state === "payment_pending");
   if (!pending.length) return;
-  console.log(`[INFO] Recovering ${pending.length} pending payment session(s) after restart...`);
+  console.log(`[INFO] Recovery: ${pending.length} pending session(s) found — watchdog will handle them`);
 
   const fakeCtx = { telegram: bot.telegram };
-
-  for (const [uidStr, sess] of pending) {
+  for (const [uidStr] of pending) {
     const uid = Number(uidStr);
-    const { transaction_id, qr_sent_at, account_type, reserved_accounts = [] } = sess;
-
-    try {
-      // Check if already paid
-      const { paid, data: payData } = await checkKhpayStatus(transaction_id);
-      if (paid) {
-        console.log(`[INFO] Recovery: session ${uid} already paid — delivering`);
-        await deliverAccounts(fakeCtx, uid, uid, sess, payData);
-        continue;
-      }
-
-      const elapsed   = Date.now() - (qr_sent_at || 0);
-      const remaining = PAYMENT_TIMEOUT_SEC * 1000 - elapsed;
-
-      if (remaining > 5000) {
-        // Still within window — notify user and restart polling
-        console.log(`[INFO] Recovery: restarting poll for ${uid}, ${Math.round(remaining / 1000)}s left`);
-        await sendMsg(fakeCtx, uid,
-          "⚠️ <b>Bot បានចាប់ផ្ដើមឡើងវិញ!</b>\n\nQR Code របស់អ្នកនៅតែដំណើរការ។ សូមមើលរូប QR ចាស់ ឬរង់ចាំ…"
-        ).catch(() => {});
-        scheduleQRExpiry(fakeCtx, uid, uid, transaction_id, qr_sent_at);
-      } else {
-        // Expired — return stock and notify
-        console.log(`[INFO] Recovery: session ${uid} expired — returning stock`);
-        if (reserved_accounts.length && account_type) {
-          accounts_data.account_types[account_type] = [
-            ...reserved_accounts,
-            ...(accounts_data.account_types[account_type] ?? []),
-          ];
-          saveAccounts();
-        }
-        delete user_sessions[uid];
-        saveSessions();
-        await sendMsg(fakeCtx, uid,
-          "⌛ <b>QR Code បានផុតកំណត់</b>\n\nសូមបង្កើតការទិញម្ដងទៀត។"
-        ).catch(() => {});
-      }
-    } catch (e) {
-      console.warn(`[WARN] Recovery failed for uid ${uid}:`, e.message);
-    }
+    await sendMsg(fakeCtx, uid,
+      "⚠️ <b>Bot បានចាប់ផ្ដើមឡើងវិញ!</b>\n\nQR Code របស់អ្នកនៅតែដំណើរការ។ សូមមើលរូប QR ចាស់ ឬរង់ចាំ…"
+    ).catch(() => {});
   }
 }
 
@@ -1452,5 +1436,6 @@ bot.launch().then(async () => {
   console.log(`[INFO] Bot ready: @${me.username}`);
   try { await bot.telegram.sendMessage(ADMIN_ID, "✅ <b>Bot ចាប់ផ្ដើម! (JavaScript — 100% GitHub structure)</b>", { parse_mode: "HTML" }); } catch {}
   await recoverPendingSessions();
+  startPaymentWatchdog();
   startEmailLivePolling();
 });
