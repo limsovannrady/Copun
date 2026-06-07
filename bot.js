@@ -4,78 +4,51 @@ import crypto from "crypto";
 import http from "http";
 import { fileURLToPath } from "url";
 import QRCode from "qrcode";
-import sharp from "sharp";
 import { Telegraf, Markup } from "telegraf";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
-// ── 1. Config ─────────────────────────────────────────────────────────────────
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || "";
 if (!BOT_TOKEN) { console.error("[ERROR] TELEGRAM_BOT_TOKEN is not set. Exiting."); process.exit(1); }
-
-const ADMIN_ID               = Number(process.env.ADMIN_ID || "");
+const ADMIN_ID = Number(process.env.ADMIN_ID || "");
 if (!ADMIN_ID) { console.error("[ERROR] ADMIN_ID is not set. Exiting."); process.exit(1); }
-let   EXTRA_ADMIN_IDS        = new Set();
-let   CHANNEL_ID             = process.env.CHANNEL_ID || "";
-let   PAYMENT_NAME           = "RADY";
-let   MAINTENANCE_MODE       = false;
-let   KHPAY_API_KEY          = process.env.KHPAY_API_KEY || "";
 
-const KHPAY_BASE             = "https://www.khpay.site/api/v1";
-const PAYMENT_TIMEOUT_SEC    = 60;
-const PAYMENT_POLL_INTERVAL  = 5;
-const WEBHOOK_PORT           = 5000;
-let   WEBHOOK_SECRET         = "";   // loaded/generated in loadAll()
-let   WEBHOOK_URL            = "";
+let EXTRA_ADMIN_IDS = new Set();
+let CHANNEL_ID      = process.env.CHANNEL_ID || "";
+let PAYMENT_NAME    = "RADY";
+let MAINTENANCE_MODE = false;
+let KHPAY_API_KEY   = process.env.KHPAY_API_KEY || "";
+const KHPAY_BASE    = "https://www.khpay.site/api/v1";
+const PAYMENT_TIMEOUT_SEC   = 60;
+const PAYMENT_POLL_INTERVAL = 5;
+const WEBHOOK_PORT  = 5000;
+let WEBHOOK_SECRET  = "";
+let WEBHOOK_URL     = "";
 
-// ── 2. DB file & logo path ────────────────────────────────────────────────────
-const DB_FILE   = path.join(__dirname, "db.json");
-const LOGO_PATH = path.join(__dirname, "logo.jpg");
-let   _logoBuffer = null;
-async function getLogoBuffer() {
-  if (_logoBuffer) return _logoBuffer;
-  if (!fs.existsSync(LOGO_PATH)) return null;
-  try { _logoBuffer = fs.readFileSync(LOGO_PATH); } catch {}
-  return _logoBuffer;
-}
+const DB_FILE = path.join(__dirname, "db.json");
+let accounts_data = { account_types: {}, prices: {} };
+let user_sessions = {};
+let settings      = {};
+let known_users   = {};
+let purchases     = [];
+const _notified   = new Set();
 
-// ── 3. In-memory state ────────────────────────────────────────────────────────
-let accounts_data  = { account_types: {}, prices: {} };
-let user_sessions  = {};
-let settings       = {};
-let known_users    = {};
-let purchases      = [];
-const _notified    = new Set();
-
-// ── 4. Single-file persistence ────────────────────────────────────────────────
-const readDB  = () => { try { return JSON.parse(fs.readFileSync(DB_FILE, "utf8")); } catch { return {}; } };
-const saveDB  = () => {
-  try {
-    fs.writeFileSync(DB_FILE, JSON.stringify(
-      { accounts: accounts_data, sessions: user_sessions, settings, users: known_users, purchases },
-      null, 2), "utf8");
-  } catch(e) { console.warn("[WARN]", e.message); }
+const readDB = () => { try { return JSON.parse(fs.readFileSync(DB_FILE, "utf8")); } catch { return {}; } };
+const saveDB = () => {
+  try { fs.writeFileSync(DB_FILE, JSON.stringify({ accounts: accounts_data, sessions: user_sessions, settings, users: known_users, purchases }, null, 2), "utf8"); }
+  catch(e) { console.warn("[WARN]", e.message); }
 };
-
-const saveAccounts  = saveDB;
-const saveSessions  = saveDB;
-const saveSettings  = saveDB;
-const saveUsers     = saveDB;
-const savePurchases = saveDB;
-
+const saveAccounts = saveDB, saveSessions = saveDB, saveSettings = saveDB, saveUsers = saveDB, savePurchases = saveDB;
 const getSetting = (k, def = null) => settings[k] ?? def;
 const setSetting = (k, v) => { settings[k] = v; saveDB(); };
 
-// ── Cambodia timezone helpers ─────────────────────────────────────────────────
 const KH_TZ     = "Asia/Phnom_Penh";
 const nowKH     = () => new Date().toLocaleString("sv-SE", { timeZone: KH_TZ }).replace("T", " ") + " +07";
 const nowKHFile = () => new Date().toLocaleString("sv-SE", { timeZone: KH_TZ }).replace(/[-: ]/g, "").slice(0, 14);
 const fmtKH     = (iso) => iso ? new Date(iso).toLocaleString("sv-SE", { timeZone: KH_TZ }).replace("T", " ") + " +07" : "—";
 
-// ── 5. Admin helpers ──────────────────────────────────────────────────────────
 const isAdmin = uid => Number(uid) === ADMIN_ID || EXTRA_ADMIN_IDS.has(Number(uid));
 
-// ── 6. Button labels (100% identical to GitHub) ───────────────────────────────
 const BTN_ADD_ACCOUNT       = "➕ បន្ថែម គូប៉ុង";
 const BTN_DELETE_TYPE       = "🗑 លុបប្រភេទ";
 const BTN_STOCK             = "📦 ស្តុក គូប៉ុង";
@@ -100,7 +73,6 @@ const BTN_DELETE_CONFIRM    = "✅ បញ្ជាក់លុប";
 const BTN_DELETE_CANCEL     = "🚫 បោះបង់ការលុប";
 const BTN_BROADCAST_CONFIRM = "✅ បញ្ជាក់ផ្សាយ";
 const BTN_BROADCAST_CANCEL  = "🚫 បោះបង់ការផ្សាយ";
-
 const ADMIN_SETTINGS_BTN    = "⚙️កំណត់";
 
 const ADMIN_BUTTON_LABELS = new Set([
@@ -113,11 +85,8 @@ const ADMIN_BUTTON_LABELS = new Set([
   ADMIN_SETTINGS_BTN,
 ]);
 
-// ── 7. Keyboards ──────────────────────────────────────────────────────────────
-const MAIN_KB = Markup.keyboard([["💵 ទិញគូប៉ុង"]]).resize().persistent();
-
+const MAIN_KB  = Markup.keyboard([["💵 ទិញគូប៉ុង"]]).resize().persistent();
 const ADMIN_KB = Markup.keyboard([[ADMIN_SETTINGS_BTN]]).resize().persistent();
-
 const ADMIN_SETTINGS_KB = Markup.keyboard([
   [BTN_ADD_ACCOUNT, BTN_DELETE_TYPE],
   [BTN_STOCK,       BTN_BUYERS],
@@ -125,123 +94,62 @@ const ADMIN_SETTINGS_KB = Markup.keyboard([
   [BTN_CHANNEL,     BTN_ADMINS],
   [BTN_BROADCAST,   BTN_MAINTENANCE],
 ]).resize().persistent();
-
-const CANCEL_INPUT_KB    = Markup.keyboard([[BTN_CANCEL_INPUT]]).resize().persistent();
-const ADD_ACCOUNT_KB     = Markup.keyboard([[BTN_BACK_SETTINGS]]).resize().persistent();
-const BACK_SETTINGS_KB   = Markup.keyboard([[BTN_BACK_SETTINGS]]).resize().persistent();
-
-const KHPAY_SUBMENU_KB = Markup.keyboard([
-  [BTN_KHPAY_KEY_EDIT, BTN_KHPAY_INFO], [BTN_BACK_SETTINGS],
-]).resize().persistent();
-
-const CHANNEL_SUBMENU_KB = Markup.keyboard([
-  [BTN_CHANNEL_EDIT, BTN_CHANNEL_CLEAR], [BTN_BACK_SETTINGS],
-]).resize().persistent();
-
-const ADMINS_SUBMENU_KB = Markup.keyboard([
-  [BTN_ADMIN_ADD, BTN_ADMIN_REMOVE], [BTN_BACK_SETTINGS],
-]).resize().persistent();
-
-const MAINTENANCE_SUBMENU_KB = Markup.keyboard([
-  [BTN_MAINT_ON, BTN_MAINT_OFF], [BTN_BACK_SETTINGS],
-]).resize().persistent();
-
-const BROADCAST_CONFIRM_KB = Markup.keyboard([
-  [BTN_BROADCAST_CONFIRM], [BTN_BROADCAST_CANCEL],
-]).resize().persistent();
-
-
-const CHECK_PAYMENT_INLINE = Markup.inlineKeyboard([
-  [
-    Markup.button.callback("🚫 បោះបង់", "cancel_purchase"),
-    Markup.button.callback("✅ បានបង់ប្រាក់", "check_payment"),
-  ],
-]);
-
+const CANCEL_INPUT_KB  = Markup.keyboard([[BTN_CANCEL_INPUT]]).resize().persistent();
+const ADD_ACCOUNT_KB   = Markup.keyboard([[BTN_BACK_SETTINGS]]).resize().persistent();
+const BACK_SETTINGS_KB = Markup.keyboard([[BTN_BACK_SETTINGS]]).resize().persistent();
+const KHPAY_SUBMENU_KB = Markup.keyboard([[BTN_KHPAY_KEY_EDIT, BTN_KHPAY_INFO], [BTN_BACK_SETTINGS]]).resize().persistent();
+const CHANNEL_SUBMENU_KB = Markup.keyboard([[BTN_CHANNEL_EDIT, BTN_CHANNEL_CLEAR], [BTN_BACK_SETTINGS]]).resize().persistent();
+const ADMINS_SUBMENU_KB  = Markup.keyboard([[BTN_ADMIN_ADD, BTN_ADMIN_REMOVE], [BTN_BACK_SETTINGS]]).resize().persistent();
+const MAINTENANCE_SUBMENU_KB = Markup.keyboard([[BTN_MAINT_ON, BTN_MAINT_OFF], [BTN_BACK_SETTINGS]]).resize().persistent();
+const BROADCAST_CONFIRM_KB   = Markup.keyboard([[BTN_BROADCAST_CONFIRM], [BTN_BROADCAST_CANCEL]]).resize().persistent();
+const CHECK_PAYMENT_INLINE   = Markup.inlineKeyboard([[
+  Markup.button.callback("🚫 បោះបង់", "cancel_purchase"),
+  Markup.button.callback("✅ បានបង់ប្រាក់", "check_payment"),
+]]);
 const mainKb = uid => isAdmin(uid) ? ADMIN_KB : Markup.removeKeyboard();
 
-
-// ── 8. KhPay API helpers ──────────────────────────────────────────────────────
 async function khpayRequest(method, path, body = null) {
-  const opts = {
-    method,
-    headers: {
-      Authorization: `Bearer ${KHPAY_API_KEY}`,
-      "Content-Type": "application/json",
-    },
-    signal: AbortSignal.timeout(12000),
-  };
+  const opts = { method, headers: { Authorization: `Bearer ${KHPAY_API_KEY}`, "Content-Type": "application/json" }, signal: AbortSignal.timeout(12000) };
   if (body) opts.body = JSON.stringify(body);
-  const res  = await fetch(`${KHPAY_BASE}${path}`, opts);
+  const res = await fetch(`${KHPAY_BASE}${path}`, opts);
   const text = await res.text();
   try { return JSON.parse(text); } catch { return { success: false, error: text }; }
 }
 
 async function generatePlainQR(qr_string) {
-  return QRCode.toBuffer(qr_string, {
-    errorCorrectionLevel: "M",
-    width: 400,
-    margin: 3,
-    color: { dark: "#000000", light: "#ffffff" },
-  });
+  return QRCode.toBuffer(qr_string, { errorCorrectionLevel: "M", width: 400, margin: 3, color: { dark: "#000000", light: "#ffffff" } });
 }
 
 async function createKhpayPayment(amount, note = "") {
   try {
-    const data = await khpayRequest("POST", "/bakong/generate", {
-      amount,
-      note: note || PAYMENT_NAME,
-      callback_url: WEBHOOK_URL,
-    });
-    if (!data.success) {
-      return { imgBuffer: null, transaction_id: null, error: data.error || "API error" };
-    }
+    const data = await khpayRequest("POST", "/bakong/generate", { amount, note: note || PAYMENT_NAME, callback_url: WEBHOOK_URL });
+    if (!data.success) return { imgBuffer: null, transaction_id: null, error: data.error || "API error" };
     const d = data.data;
     const { transaction_id, md5 } = d;
     const qr_string = d.qr || d.qr_string || d.qr_code || "";
-    // KhPay returns expires_at (datetime string) — convert to seconds remaining
     let expires_in = d.expires_in ?? 180;
-    if (d.expires_at) {
-      const secs = Math.floor((new Date(d.expires_at) - Date.now()) / 1000);
-      if (secs > 0) expires_in = secs;
-    }
-
-    // Use KhPay's own QR image (download_qr) — fallback to plain QR
+    if (d.expires_at) { const secs = Math.floor((new Date(d.expires_at) - Date.now()) / 1000); if (secs > 0) expires_in = secs; }
     let imgBuffer;
     const imgUrl = d.download_qr || d.image_url || d.qr_image_url || d.image || d.qr_image || null;
     if (imgUrl) {
       try {
         const r = await fetch(imgUrl, { signal: AbortSignal.timeout(10000) });
-        if (r.ok) {
-          imgBuffer = Buffer.from(await r.arrayBuffer());
-          console.log("[KhPay] Using API image:", imgUrl);
-        } else throw new Error(`HTTP ${r.status}`);
-      } catch (e) {
-        console.warn("[KhPay] Image download failed, using plain QR:", e.message);
-        imgBuffer = await generatePlainQR(qr_string);
-      }
-    } else {
-      imgBuffer = await generatePlainQR(qr_string);
-    }
+        if (r.ok) { imgBuffer = Buffer.from(await r.arrayBuffer()); console.log("[KhPay] Using API image:", imgUrl); }
+        else throw new Error(`HTTP ${r.status}`);
+      } catch (e) { console.warn("[KhPay] Image download failed, using plain QR:", e.message); imgBuffer = await generatePlainQR(qr_string); }
+    } else { imgBuffer = await generatePlainQR(qr_string); }
     return { imgBuffer, transaction_id, md5: md5 ?? null, expires_in: expires_in ?? 180, error: null };
-  } catch (e) {
-    return { imgBuffer: null, transaction_id: null, error: e.message };
-  }
+  } catch (e) { return { imgBuffer: null, transaction_id: null, error: e.message }; }
 }
 
 async function checkKhpayStatus(transaction_id, md5 = null) {
   try {
-    // Primary: GET /transactions/{id}
     const data = await khpayRequest("GET", `/transactions/${transaction_id}`);
     if (data.success) {
       const d = data.data;
       const status = (d.status ?? "").toLowerCase();
-      if (status === "paid" || status === "success" || status === "completed" || !!d.paid_at) {
-        return { paid: true, status, data: d };
-      }
+      if (status === "paid" || status === "success" || status === "completed" || !!d.paid_at) return { paid: true, status, data: d };
     }
-
-    // Secondary: POST /bakong/check — always call this; md5 is optional but endpoint works without it
     const bkBody = md5 ? { transaction_id, md5 } : { transaction_id };
     const bk = await khpayRequest("POST", "/bakong/check", bkBody);
     if (bk.success && bk.data) {
@@ -250,24 +158,16 @@ async function checkKhpayStatus(transaction_id, md5 = null) {
         || bk.data.transaction !== null && bk.data.transaction !== undefined;
       if (bkPaid) return { paid: true, status: bkStatus, data: bk.data.transaction ?? bk.data };
     }
-
     const fallbackStatus = data.success ? (data.data?.status ?? "pending") : "error";
     return { paid: false, status: fallbackStatus, data: data.data ?? null };
-  } catch (e) {
-    console.warn("[WARN] checkKhpayStatus:", e.message);
-    return { paid: false, status: "error", data: null };
-  }
+  } catch (e) { console.warn("[WARN] checkKhpayStatus:", e.message); return { paid: false, status: "error", data: null }; }
 }
 
-// ── 9. Account type helpers ───────────────────────────────────────────────────
-const typeCallbackId  = at => crypto.createHash("sha1").update(at).digest("hex").slice(0, 12);
-const typeFromCbId    = cid => Object.keys(accounts_data.account_types).find(t => typeCallbackId(t) === cid) ?? null;
-const shortLabel      = (t, n = 36) => { const c = t.trim(); return c.length <= n ? c : c.slice(0, n - 1) + "…"; };
-
-// ── 10. HTML escape ───────────────────────────────────────────────────────────
+const typeCallbackId = at => crypto.createHash("sha1").update(at).digest("hex").slice(0, 12);
+const typeFromCbId   = cid => Object.keys(accounts_data.account_types).find(t => typeCallbackId(t) === cid) ?? null;
+const shortLabel     = (t, n = 36) => { const c = t.trim(); return c.length <= n ? c : c.slice(0, n - 1) + "…"; };
 const esc = s => String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
 
-// ── 11. JWT expiry decoder ────────────────────────────────────────────────────
 function decodeJWTExpiry(token) {
   try {
     const parts = token.split(".");
@@ -281,23 +181,21 @@ function decodeJWTExpiry(token) {
 }
 
 function daysStatus(daysLeft) {
-  if (daysLeft == null)    return "✅ Active";
-  if (daysLeft < 0)        return `❌ ផុតកំណត់រួចហើយ (${Math.abs(daysLeft)} ថ្ងៃមុន)`;
-  if (daysLeft === 0)      return "⚠️ ផុតកំណត់ថ្ងៃនេះ!";
-  if (daysLeft <= 7)       return `⚠️ នឹងផុតក្នុង ${daysLeft} ថ្ងៃ`;
+  if (daysLeft == null)  return "✅ Active";
+  if (daysLeft < 0)      return `❌ ផុតកំណត់រួចហើយ (${Math.abs(daysLeft)} ថ្ងៃមុន)`;
+  if (daysLeft === 0)    return "⚠️ ផុតកំណត់ថ្ងៃនេះ!";
+  if (daysLeft <= 7)     return `⚠️ នឹងផុតក្នុង ${daysLeft} ថ្ងៃ`;
   return `✅ នៅសល់ ${daysLeft} ថ្ងៃ`;
 }
 
-// ── 12. Account format helper ─────────────────────────────────────────────────
 function formatAccount(acc) {
   if (typeof acc === "string") return acc;
-  if (acc.email)  return acc.email;
-  if (acc.phone)  return `${acc.phone} | ${acc.password || ""}`;
-  if (acc.code)   return acc.code;
+  if (acc.email) return acc.email;
+  if (acc.phone) return `${acc.phone} | ${acc.password || ""}`;
+  if (acc.code)  return acc.code;
   return JSON.stringify(acc);
 }
 
-// ── 13. Send helpers ──────────────────────────────────────────────────────────
 async function sendMsg(ctx, chatId, text, extra = {}) {
   try { return await ctx.telegram.sendMessage(chatId, text, { parse_mode: "HTML", ...extra }); }
   catch (e) { console.warn(`[WARN] sendMsg(${chatId}):`, e.message); }
@@ -314,197 +212,115 @@ async function deleteMsg(ctx, chatId, messageId) {
   if (!messageId) return;
   try { await ctx.telegram.deleteMessage(chatId, messageId); } catch {}
 }
-async function editMsgReplyMarkup(ctx, chatId, messageId, markup) {
-  try { await ctx.telegram.editMessageReplyMarkup(chatId, messageId, null, markup?.reply_markup ?? markup); } catch {}
-}
 
-// ── 14. Admin notifications ───────────────────────────────────────────────────
 async function notifyAdminNewUser(ctx, user) {
   const uid = user.id;
   if (uid === ADMIN_ID || _notified.has(uid) || known_users[String(uid)]) return;
   _notified.add(uid);
-  known_users[String(uid)] = {
-    first_name: user.first_name || "",
-    last_name:  user.last_name  || "",
-    username:   user.username   || "",
-    first_seen: new Date().toISOString(),
-  };
+  known_users[String(uid)] = { first_name: user.first_name || "", last_name: user.last_name || "", username: user.username || "", first_seen: new Date().toISOString() };
   saveUsers();
   const full  = [user.first_name, user.last_name].filter(Boolean).join(" ") || "N/A";
   const uname = user.username ? `@${user.username}` : "—";
-  await sendMsg(ctx, ADMIN_ID,
-    `🆕 <b>អ្នកប្រើប្រាស់ថ្មី!</b>\n\n👤 ឈ្មោះ: ${esc(full)}\n🔖 Username: ${esc(uname)}\n🪪 ID: <code>${uid}</code>`);
+  await sendMsg(ctx, ADMIN_ID, `🆕 <b>អ្នកប្រើប្រាស់ថ្មី!</b>\n\n👤 ឈ្មោះ: ${esc(full)}\n🔖 Username: ${esc(uname)}\n🪪 ID: <code>${uid}</code>`);
 }
 
-// ── 15. Account selection ─────────────────────────────────────────────────────
 async function showAccountSelection(ctx, chatId) {
   const available = Object.entries(accounts_data.account_types)
     .filter(([, v]) => v.length > 0)
     .map(([at, v]) => ({ at, count: v.length }));
-
-  if (!available.length) {
-    await sendMsg(ctx, chatId, "<i>សូមអភ័យទោស អស់ពីស្តុក 🪤</i>");
-    return;
-  }
-  const rows = available.map(({ at, count }) =>
-    [Markup.button.callback(`${at} – មានក្នុងស្តុក ${count}`, `buy:${typeCallbackId(at)}`)]
-  );
-  await sendMsg(ctx, chatId, "<b>សូមជ្រើសរើសគូប៉ុងដើម្បីទិញ៖</b>",
-    Markup.inlineKeyboard(rows));
+  if (!available.length) { await sendMsg(ctx, chatId, "<i>សូមអភ័យទោស អស់ពីស្តុក 🪤</i>"); return; }
+  const rows = available.map(({ at, count }) => [Markup.button.callback(`${at} – មានក្នុងស្តុក ${count}`, `buy:${typeCallbackId(at)}`)]);
+  await sendMsg(ctx, chatId, "<b>សូមជ្រើសរើសគូប៉ុងដើម្បីទិញ៖</b>", Markup.inlineKeyboard(rows));
 }
 
 async function sendAdminSettingsMenu(ctx, chatId) {
-  await sendMsg(ctx, chatId,
-    "<b>⚙️ ការកំណត់ Admin</b>\n\nសូមជ្រើសរើសប្រតិបត្តិការខាងក្រោម៖",
-    ADMIN_SETTINGS_KB);
+  await sendMsg(ctx, chatId, "<b>⚙️ ការកំណត់ Admin</b>\n\nសូមជ្រើសរើសប្រតិបត្តិការខាងក្រោម៖", ADMIN_SETTINGS_KB);
 }
 
-// ── 16. Payment flow ──────────────────────────────────────────────────────────
 async function startPaymentForSession(ctx, chatId, userId, session, cbQuery = null) {
   const { account_type, quantity } = session;
   const pool = accounts_data.account_types[account_type] ?? [];
-
   if (pool.length < quantity) {
     if (cbQuery) { try { await cbQuery.answerCbQuery(`សូមអភ័យទោស! មានត្រឹមតែ ${pool.length} គូប៉ុង នៅក្នុងស្តុក`, { show_alert: true }); } catch {} }
-    delete user_sessions[userId]; saveSessions();
-    return false;
+    delete user_sessions[userId]; saveSessions(); return false;
   }
-
   const reserved = pool.slice(0, quantity);
   accounts_data.account_types[account_type] = pool.slice(quantity);
   session.reserved_accounts = reserved;
   session.available_count   = accounts_data.account_types[account_type].length;
   saveAccounts();
-
   if (cbQuery) { try { await cbQuery.answerCbQuery("កំពុងបង្កើត QR..."); } catch {} }
   session.state = "payment_pending";
-
   const { imgBuffer, transaction_id, md5, error } = await createKhpayPayment(session.total_price, session.account_type);
-
   if (!imgBuffer || !transaction_id) {
-    if (isAdmin(userId)) {
-      await sendMsg(ctx, chatId, `❌ <b>QR បរាជ័យ (Admin Debug):</b>\n<code>${esc(String(error))}</code>`);
-    } else {
-      await sendMsg(ctx, chatId, "❌ <b>មានបញ្ហាក្នុងការបង្កើត QR Code</b>\n\nសូមព្យាយាមម្ដងទៀត។");
-      await sendMsg(ctx, ADMIN_ID, `⚠️ QR Error (user ${userId}): <code>${esc(String(error))}</code>`);
-    }
+    if (isAdmin(userId)) { await sendMsg(ctx, chatId, `❌ <b>QR បរាជ័យ (Admin Debug):</b>\n<code>${esc(String(error))}</code>`); }
+    else { await sendMsg(ctx, chatId, "❌ <b>មានបញ្ហាក្នុងការបង្កើត QR Code</b>\n\nសូមព្យាយាមម្ដងទៀត។"); await sendMsg(ctx, ADMIN_ID, `⚠️ QR Error (user ${userId}): <code>${esc(String(error))}</code>`); }
     accounts_data.account_types[account_type] = [...reserved, ...(accounts_data.account_types[account_type] ?? [])];
-    saveAccounts();
-    delete user_sessions[userId]; saveSessions();
-    return false;
+    saveAccounts(); delete user_sessions[userId]; saveSessions(); return false;
   }
-
-  session.transaction_id = transaction_id;
-  session.md5            = md5 ?? null;
-  session.qr_sent_at     = Date.now();
-
+  session.transaction_id   = transaction_id;
+  session.md5              = md5 ?? null;
+  session.qr_sent_at       = Date.now();
   const photoMsg = await sendPhoto(ctx, chatId, imgBuffer, { ...CHECK_PAYMENT_INLINE });
-  if (photoMsg) {
-    session.photo_message_id = photoMsg.message_id;
-    session.qr_message_id    = photoMsg.message_id;
-  }
-
-  user_sessions[userId] = session;
-  saveSessions();
-
+  if (photoMsg) { session.photo_message_id = photoMsg.message_id; session.qr_message_id = photoMsg.message_id; }
+  user_sessions[userId] = session; saveSessions();
   console.log(`[INFO] KhPay QR sent to user ${userId}: Amount $${session.total_price}, TxnID: ${transaction_id}`);
   return true;
 }
 
-// ── KhPay Webhook HTTP Server ─────────────────────────────────────────────────
 function startWebhookServer() {
   const server = http.createServer((req, res) => {
     const url = new URL(req.url, `http://localhost`);
-
-    // Health check
-    if (req.method === "GET" && url.pathname === "/") {
-      res.writeHead(200); res.end("OK"); return;
-    }
-
-    // Only handle POST /khpay-webhook
-    if (req.method !== "POST" || url.pathname !== "/khpay-webhook") {
-      res.writeHead(404); res.end(); return;
-    }
-
-    // Verify secret
-    if (url.searchParams.get("secret") !== WEBHOOK_SECRET) {
-      console.warn("[Webhook] Rejected: invalid secret");
-      res.writeHead(403); res.end(); return;
-    }
-
+    if (req.method === "GET" && url.pathname === "/") { res.writeHead(200); res.end("OK"); return; }
+    if (req.method !== "POST" || url.pathname !== "/khpay-webhook") { res.writeHead(404); res.end(); return; }
+    if (url.searchParams.get("secret") !== WEBHOOK_SECRET) { console.warn("[Webhook] Rejected: invalid secret"); res.writeHead(403); res.end(); return; }
     let body = "";
     req.on("data", chunk => { body += chunk; });
     req.on("end", async () => {
       res.writeHead(200); res.end("OK");
       try {
         const payload = JSON.parse(body);
-        const txnId   = payload?.transaction_id ?? payload?.data?.transaction_id;
-        const status  = (payload?.status ?? payload?.data?.status ?? "").toLowerCase();
-        const isPaid  = status === "paid" || status === "success" || status === "completed"
-                     || payload?.data?.transaction != null;
-
+        const txnId  = payload?.transaction_id ?? payload?.data?.transaction_id;
+        const status = (payload?.status ?? payload?.data?.status ?? "").toLowerCase();
+        const isPaid = status === "paid" || status === "success" || status === "completed" || payload?.data?.transaction != null;
         console.log(`[Webhook] Received: txn=${txnId} status=${status}`);
         if (!txnId || !isPaid) return;
-
-        // Find matching pending session
-        const entry = Object.entries(user_sessions).find(
-          ([, s]) => s.state === "payment_pending" && s.transaction_id === txnId
-        );
+        const entry = Object.entries(user_sessions).find(([, s]) => s.state === "payment_pending" && s.transaction_id === txnId);
         if (!entry) return;
-
         const [uidStr, sess] = entry;
         const userId = Number(uidStr);
         if (sess.state !== "payment_pending") return;
         sess.state = "delivering";
-
         console.log(`[Webhook] ✅ Payment confirmed instantly for user ${userId}: ${txnId}`);
         const fakeCtx = { telegram: bot.telegram };
         await deliverAccounts(fakeCtx, userId, userId, sess, payload?.data ?? payload);
-      } catch (e) {
-        console.warn("[Webhook] Error processing payload:", e.message);
-      }
+      } catch (e) { console.warn("[Webhook] Error processing payload:", e.message); }
     });
   });
-
-  server.listen(WEBHOOK_PORT, () => {
-    console.log(`[Webhook] Server listening on port ${WEBHOOK_PORT}`);
-    console.log(`[Webhook] URL: ${WEBHOOK_URL}`);
-  });
+  server.listen(WEBHOOK_PORT, () => { console.log(`[Webhook] Server listening on port ${WEBHOOK_PORT}`); console.log(`[Webhook] URL: ${WEBHOOK_URL}`); });
 }
 
-// ── Delivery idempotency lock (prevents double-delivery from webhook + watchdog) ─
 const _delivering = new Set();
-
-// ── Global payment watchdog (replaces per-session setInterval) ─────────────────
 let _watchdogTimer = null;
 
 function startPaymentWatchdog() {
   if (_watchdogTimer) clearInterval(_watchdogTimer);
-  _watchdogTimer = setInterval(async () => {
-    try { await runPaymentWatchdog(); } catch (e) { console.warn("[Watchdog] error:", e.message); }
-  }, PAYMENT_POLL_INTERVAL * 1000);
+  _watchdogTimer = setInterval(async () => { try { await runPaymentWatchdog(); } catch (e) { console.warn("[Watchdog] error:", e.message); } }, PAYMENT_POLL_INTERVAL * 1000);
   console.log(`[Watchdog] Payment watchdog started (every ${PAYMENT_POLL_INTERVAL}s)`);
 }
 
 async function runPaymentWatchdog() {
   const pending = Object.entries(user_sessions).filter(([, s]) => s.state === "payment_pending");
   if (!pending.length) return;
-
   const fakeCtx = { telegram: bot.telegram };
-
   for (const [uidStr, sess] of pending) {
     const userId = Number(uidStr);
     const { transaction_id, qr_sent_at, account_type, reserved_accounts = [] } = sess;
-
     const elapsed = Date.now() - (qr_sent_at || 0);
-
     if (elapsed >= PAYMENT_TIMEOUT_SEC * 1000) {
-      // Expired — return stock, notify user
       console.log(`[Watchdog] Session expired for user ${userId}`);
       if (reserved_accounts.length && account_type) {
-        accounts_data.account_types[account_type] = [
-          ...reserved_accounts, ...(accounts_data.account_types[account_type] ?? []),
-        ];
+        accounts_data.account_types[account_type] = [...reserved_accounts, ...(accounts_data.account_types[account_type] ?? [])];
         saveAccounts();
       }
       delete user_sessions[userId]; saveSessions();
@@ -513,84 +329,44 @@ async function runPaymentWatchdog() {
       await showAccountSelection(fakeCtx, userId).catch(() => {});
       continue;
     }
-
-    // Check payment status
     try {
       const { paid, data: payData } = await checkKhpayStatus(transaction_id, sess.md5 ?? null);
       if (!paid) continue;
-
-      // Mark as delivering (idempotency guard)
       const cur = user_sessions[userId];
       if (!cur || cur.transaction_id !== transaction_id || cur.state !== "payment_pending") continue;
       cur.state = "delivering";
-
       console.log(`[Watchdog] Payment confirmed for user ${userId}: ${transaction_id}`);
       await deliverAccounts(fakeCtx, userId, userId, cur, payData);
-    } catch (e) {
-      console.warn(`[Watchdog] Status check error for ${transaction_id}:`, e.message);
-    }
+    } catch (e) { console.warn(`[Watchdog] Status check error for ${transaction_id}:`, e.message); }
   }
 }
 
 async function deliverAccounts(ctx, chatId, userId, session, paymentData = null) {
-  // Idempotency lock — prevent double delivery from webhook + watchdog race
   const lockKey = session.transaction_id || String(userId);
-  if (_delivering.has(lockKey)) {
-    console.warn(`[Deliver] Skipping duplicate delivery for ${lockKey}`);
-    return;
-  }
+  if (_delivering.has(lockKey)) { console.warn(`[Deliver] Skipping duplicate delivery for ${lockKey}`); return; }
   _delivering.add(lockKey);
-
   try {
     const { account_type, quantity } = session;
     const reserved = session.reserved_accounts ?? [];
-
-    // Delete QR photo
-    for (const k of ["photo_message_id", "qr_message_id"]) {
-      if (session[k]) deleteMsg(ctx, chatId, session[k]).catch(() => {});
-    }
-
-    // Determine coupons to deliver
+    for (const k of ["photo_message_id", "qr_message_id"]) { if (session[k]) deleteMsg(ctx, chatId, session[k]).catch(() => {}); }
     let delivered = null;
-    if (reserved.length >= quantity) {
-      // Already removed from pool at reservation time — just use them
-      delivered = reserved.slice(0, quantity);
-      saveAccounts();
-    } else if ((accounts_data.account_types[account_type] ?? []).length >= quantity) {
+    if (reserved.length >= quantity) { delivered = reserved.slice(0, quantity); saveAccounts(); }
+    else if ((accounts_data.account_types[account_type] ?? []).length >= quantity) {
       const pool = accounts_data.account_types[account_type];
       delivered  = pool.slice(0, quantity);
       accounts_data.account_types[account_type] = pool.slice(quantity);
       saveAccounts();
     }
-
     delete user_sessions[userId]; saveSessions();
-
-    if (!delivered) {
-      await sendMsg(ctx, chatId, `❌ <b>មានបញ្ហា!</b>\n\nគ្មាន គូប៉ុង ប្រភេទ ${esc(account_type)} ក្នុងស្តុក។`);
-      return;
-    }
-
-    // Save purchase history
-    purchases.push({
-      user_id: userId, account_type, quantity,
-      total_price: session.total_price, accounts: delivered,
-      purchased_at: new Date().toISOString(),
-    });
+    if (!delivered) { await sendMsg(ctx, chatId, `❌ <b>មានបញ្ហា!</b>\n\nគ្មាន គូប៉ុង ប្រភេទ ${esc(account_type)} ក្នុងស្តុក។`); return; }
+    purchases.push({ user_id: userId, account_type, quantity, total_price: session.total_price, accounts: delivered, purchased_at: new Date().toISOString() });
     savePurchases();
-
-    // Send one message per coupon
     for (let i = 0; i < delivered.length; i++) {
       const acc    = delivered[i];
       const isLast = i === delivered.length - 1;
-      const msg    =
-        `🎉 <b>ការទិញបានបញ្ជាក់ដោយជោគជ័យ</b>\n\n` +
-        `គូប៉ុងរបស់អ្នក៖ 👇\n\n` +
-        `<code>${esc(formatAccount(acc))}</code>\n\n` +
-        `<i>សូមអរគុណសម្រាប់ការទិញ 🙏</i>`;
+      const msg    = `🎉 <b>ការទិញបានបញ្ជាក់ដោយជោគជ័យ</b>\n\nគូប៉ុងរបស់អ្នក៖ 👇\n\n<code>${esc(formatAccount(acc))}</code>\n\n<i>សូមអរគុណសម្រាប់ការទិញ 🙏</i>`;
       await sendMsg(ctx, chatId, msg, isLast ? mainKb(userId) : undefined);
     }
-
-    // Admin / channel notification
     try {
       const pd  = paymentData || {};
       const now = nowKH();
@@ -608,98 +384,67 @@ async function deliverAccounts(ctx, chatId, userId, session, paymentData = null)
         `🧾 <b>លេខយោង:</b> <code>${esc(ref)}</code>\n` +
         `⏰ <b>ម៉ោង:</b> ${now}`;
       await sendMsg(ctx, ADMIN_ID, adminMsg);
-      if (CHANNEL_ID && String(CHANNEL_ID) !== String(ADMIN_ID)) {
-        await sendMsg(ctx, CHANNEL_ID, adminMsg).catch(() => {});
-      }
+      if (CHANNEL_ID && String(CHANNEL_ID) !== String(ADMIN_ID)) await sendMsg(ctx, CHANNEL_ID, adminMsg).catch(() => {});
     } catch (e) { console.warn("[WARN] admin payment notify:", e.message); }
-
     console.log(`[INFO] Delivered ${quantity}× ${account_type} to user ${userId}`);
-  } finally {
-    _delivering.delete(lockKey);
-  }
+  } finally { _delivering.delete(lockKey); }
 }
 
-// ── 17. Bot setup ─────────────────────────────────────────────────────────────
 const bot = new Telegraf(BOT_TOKEN);
 
-// /start
 bot.command("start", async ctx => {
   const uid    = ctx.from.id;
   const chatId = ctx.chat.id;
   notifyAdminNewUser(ctx, ctx.from).catch(() => {});
-  if (MAINTENANCE_MODE && !isAdmin(uid)) {
-    return sendMsg(ctx, chatId, "🔧 <b>Bot កំពុង Update សូមរង់ចាំមួយភ្លែត...</b>");
-  }
+  if (MAINTENANCE_MODE && !isAdmin(uid)) return sendMsg(ctx, chatId, "🔧 <b>Bot កំពុង Update សូមរង់ចាំមួយភ្លែត...</b>");
   const sess = user_sessions[uid];
-  if (sess?.state === "payment_pending") {
-    return sendMsg(ctx, chatId,
-      "⏳ <b>សូមបញ្ចប់ការទិញបច្ចុប្បន្នជាមុនសិន</b>\n\nអ្នកមានការបញ្ជាទិញមួយកំពុងដំណើរការ។ " +
-      "សូមបញ្ចប់ការទូទាត់ ឬចុច <b>🚫 បោះបង់</b> មុននឹងចាប់ផ្តើមការទិញថ្មី។");
-  }
+  if (sess?.state === "payment_pending") return sendMsg(ctx, chatId, "⏳ <b>សូមបញ្ចប់ការទិញបច្ចុប្បន្នជាមុនសិន</b>\n\nអ្នកមានការបញ្ជាទិញមួយកំពុងដំណើរការ។ សូមបញ្ចប់ការទូទាត់ ឬចុច <b>🚫 បោះបង់</b> មុននឹងចាប់ផ្តើមការទិញថ្មី។");
   delete user_sessions[uid];
   await showAccountSelection(ctx, chatId);
 });
 
-
-// ── 18. Callback query handler ────────────────────────────────────────────────
 bot.on("callback_query", async ctx => {
   const data   = ctx.callbackQuery.data ?? "";
   const uid    = ctx.from.id;
   const chatId = ctx.callbackQuery.message?.chat?.id ?? ctx.chat?.id;
-
   notifyAdminNewUser(ctx, ctx.from).catch(() => {});
 
-  // ── buy:<id> ─────────────────────────────────────────────────────────────
   if (data.startsWith("buy:")) {
     const at = typeFromCbId(data.slice(4));
     if (!at) return ctx.answerCbQuery("ប្រភេទនេះមិនមានទៀតហើយ។", { show_alert: true });
     const sess = user_sessions[uid];
     if (sess?.state === "payment_pending") return ctx.answerCbQuery("សូមបញ្ចប់ការទិញបច្ចុប្បន្នជាមុនសិន", { show_alert: true });
-
     await ctx.answerCbQuery();
     const pool  = accounts_data.account_types[at] ?? [];
     const price = accounts_data.prices[at] ?? 0;
-    if (pool.length <= 0) {
-      return sendMsg(ctx, chatId, `<i>សូមអភ័យទោស គូប៉ុង ${esc(at)} អស់ពីស្តុក 🪤</i>`);
-    }
-
-    // Clear old session
+    if (pool.length <= 0) return sendMsg(ctx, chatId, `<i>សូមអភ័យទោស គូប៉ុង ${esc(at)} អស់ពីស្តុក 🪤</i>`);
     const old = user_sessions[uid];
     if (old?.reserved_accounts?.length && old.account_type) {
       accounts_data.account_types[old.account_type] = [...(old.reserved_accounts), ...(accounts_data.account_types[old.account_type] ?? [])];
       saveAccounts();
     }
-
     user_sessions[uid] = { state: "waiting_for_quantity", account_type: at, price, available_count: pool.length, started_at: Date.now() };
     saveSessions();
-
-    const typeCbId  = typeCallbackId(at);
-    const qtyBtns   = Array.from({ length: Math.min(pool.length, 25) }, (_, i) =>
-      Markup.button.callback(String(i + 1), `qty:${typeCbId}:${i + 1}`)
-    );
+    const typeCbId = typeCallbackId(at);
+    const qtyBtns  = Array.from({ length: Math.min(pool.length, 25) }, (_, i) => Markup.button.callback(String(i + 1), `qty:${typeCbId}:${i + 1}`));
     const rows = [];
     for (let i = 0; i < qtyBtns.length; i += 5) rows.push(qtyBtns.slice(i, i + 5));
     rows.push([Markup.button.callback("🚫 បោះបង់", "cancel_buy")]);
-
     await sendMsg(ctx, chatId, "<b>សូមជ្រើសរើសចំនួនដែលចង់ទិញ៖</b>", Markup.inlineKeyboard(rows));
     deleteMsg(ctx, chatId, ctx.callbackQuery.message.message_id).catch(() => {});
     return;
   }
 
-  // ── qty:<typeid>:<n> ──────────────────────────────────────────────────────
   if (data.startsWith("qty:")) {
     const parts = data.split(":");
-    let   at    = null, qty = null;
+    let at = null, qty = null;
     if (parts.length === 3) { at = typeFromCbId(parts[1]); qty = parseInt(parts[2], 10); }
     else if (parts.length === 2) { qty = parseInt(parts[1], 10); }
-
     if (!qty || qty < 1) return ctx.answerCbQuery();
-
     const sess = user_sessions[uid];
     if (!sess || sess.state !== "waiting_for_quantity") return ctx.answerCbQuery();
     if (at && sess.account_type !== at) return ctx.answerCbQuery("ប្រភេទផ្លាស់ប្ដូរ — ចាប់ផ្ដើមម្ដងទៀត", { show_alert: true });
     if (qty > sess.available_count) return ctx.answerCbQuery(`សុំទោស! មានត្រឹមតែ ${sess.available_count} នៅក្នុងស្តុក`, { show_alert: true });
-
     sess.quantity    = qty;
     sess.total_price = Math.round(qty * sess.price * 100) / 100;
     deleteMsg(ctx, chatId, ctx.callbackQuery.message.message_id).catch(() => {});
@@ -707,7 +452,6 @@ bot.on("callback_query", async ctx => {
     return;
   }
 
-  // ── cancel_buy ────────────────────────────────────────────────────────────
   if (data === "cancel_buy") {
     await ctx.answerCbQuery();
     const sess = user_sessions[uid];
@@ -721,19 +465,13 @@ bot.on("callback_query", async ctx => {
     return;
   }
 
-  // ── cancel_purchase ───────────────────────────────────────────────────────
   if (data === "cancel_purchase") {
-    const sess = user_sessions[uid];
+    const sess  = user_sessions[uid];
     const txnId = sess?.transaction_id;
-    // Check if actually paid first (smart cancel)
     if (txnId) {
       try {
         const { paid, data: pd } = await checkKhpayStatus(txnId);
-        if (paid) {
-          await ctx.answerCbQuery("✅ បានទទួលការបង់ប្រាក់!");
-          await deliverAccounts(ctx, chatId, uid, sess, pd);
-          return;
-        }
+        if (paid) { await ctx.answerCbQuery("✅ បានទទួលការបង់ប្រាក់!"); await deliverAccounts(ctx, chatId, uid, sess, pd); return; }
       } catch {}
     }
     await ctx.answerCbQuery();
@@ -743,38 +481,26 @@ bot.on("callback_query", async ctx => {
         accounts_data.account_types[account_type] = [...reserved_accounts, ...(accounts_data.account_types[account_type] ?? [])];
         saveAccounts();
       }
-      for (const k of ["photo_message_id", "qr_message_id"]) {
-        if (sess[k]) deleteMsg(ctx, chatId, sess[k]).catch(() => {});
-      }
+      for (const k of ["photo_message_id", "qr_message_id"]) { if (sess[k]) deleteMsg(ctx, chatId, sess[k]).catch(() => {}); }
       delete user_sessions[uid]; saveSessions();
     }
     await showAccountSelection(ctx, chatId);
     return;
   }
 
-  // ── check_payment (manual verify) ────────────────────────────────────────
   if (data === "check_payment") {
-    const sess = user_sessions[uid];
+    const sess  = user_sessions[uid];
     const txnId = sess?.transaction_id;
-    if (!txnId) {
-      await ctx.answerCbQuery("⚠️ រកមិនឃើញការទូទាត់", { show_alert: true });
-      return;
-    }
+    if (!txnId) { await ctx.answerCbQuery("⚠️ រកមិនឃើញការទូទាត់", { show_alert: true }); return; }
     await ctx.answerCbQuery("⏳ កំពុងពិនិត្យ…");
     try {
       const { paid, data: pd } = await checkKhpayStatus(txnId);
-      if (paid) {
-        await deliverAccounts(ctx, chatId, uid, sess, pd);
-      } else {
-        await ctx.answerCbQuery("❌ មិនទាន់បង់ប្រាក់ទេ", { show_alert: true });
-      }
-    } catch (e) {
-      await ctx.answerCbQuery("❌ មានបញ្ហា: " + e.message, { show_alert: true });
-    }
+      if (paid) { await deliverAccounts(ctx, chatId, uid, sess, pd); }
+      else { await ctx.answerCbQuery("❌ មិនទាន់បង់ប្រាក់ទេ", { show_alert: true }); }
+    } catch (e) { await ctx.answerCbQuery("❌ មានបញ្ហា: " + e.message, { show_alert: true }); }
     return;
   }
 
-  // ── Admin: dts: (delete type select) ─────────────────────────────────────
   if (data.startsWith("dts:") && isAdmin(uid)) {
     const typeName = typeFromCbId(data.slice(4)) || data.slice(4);
     if (!accounts_data.account_types[typeName]) return ctx.answerCbQuery("ប្រភេទនេះមិនមានទៀតហើយ!", { show_alert: true });
@@ -782,16 +508,11 @@ bot.on("callback_query", async ctx => {
     const count = accounts_data.account_types[typeName].length;
     const price = accounts_data.prices[typeName] ?? 0;
     await sendMsg(ctx, chatId,
-      `⚠️ <b>តើអ្នកពិតជាចង់លុបប្រភេទ គូប៉ុង នេះមែនទេ?</b>\n\n` +
-      `<blockquote>🔹 ប្រភេទ: ${esc(typeName)}\n🔹 ចំនួន: ${count}\n🔹 តម្លៃ: $${price}</blockquote>`,
-      Markup.inlineKeyboard([[
-        Markup.button.callback("✅ បញ្ជាក់លុប", `dtc:${typeCallbackId(typeName)}`),
-        Markup.button.callback("🚫 បោះបង់", "dtcancel"),
-      ]]));
+      `⚠️ <b>តើអ្នកពិតជាចង់លុបប្រភេទ គូប៉ុង នេះមែនទេ?</b>\n\n<blockquote>🔹 ប្រភេទ: ${esc(typeName)}\n🔹 ចំនួន: ${count}\n🔹 តម្លៃ: $${price}</blockquote>`,
+      Markup.inlineKeyboard([[Markup.button.callback("✅ បញ្ជាក់លុប", `dtc:${typeCallbackId(typeName)}`), Markup.button.callback("🚫 បោះបង់", "dtcancel")]]));
     return;
   }
 
-  // ── Admin: dtc: (delete type confirm) ────────────────────────────────────
   if (data.startsWith("dtc:") && isAdmin(uid)) {
     const typeName = typeFromCbId(data.slice(4)) || data.slice(4);
     if (!accounts_data.account_types[typeName]) return ctx.answerCbQuery("ប្រភេទនេះមិនមានទៀតហើយ!", { show_alert: true });
@@ -816,75 +537,50 @@ bot.on("callback_query", async ctx => {
   await ctx.answerCbQuery();
 });
 
-// ── 19. Text message router ───────────────────────────────────────────────────
 bot.on("text", async ctx => {
   const uid    = ctx.from.id;
   const chatId = ctx.chat.id;
   const text   = ctx.message.text.trim();
-
   notifyAdminNewUser(ctx, ctx.from).catch(() => {});
+  if (MAINTENANCE_MODE && !isAdmin(uid)) return sendMsg(ctx, chatId, "🔧 <b>Bot កំពុង Update សូមរង់ចាំមួយភ្លែត...</b>");
 
-  if (MAINTENANCE_MODE && !isAdmin(uid)) {
-    return sendMsg(ctx, chatId, "🔧 <b>Bot កំពុង Update សូមរង់ចាំមួយភ្លែត...</b>");
-  }
-
-  // Admin ⚙️ button
   if (text === ADMIN_SETTINGS_BTN && isAdmin(uid)) {
     const sess = user_sessions[uid] ?? {};
     if (String(sess.state || "").startsWith("admin_input:")) delete user_sessions[uid];
-    saveSessions();
-    return sendAdminSettingsMenu(ctx, chatId);
+    saveSessions(); return sendAdminSettingsMenu(ctx, chatId);
   }
 
-  // ── Admin state machine ───────────────────────────────────────────────────
   if (isAdmin(uid)) {
     const sess  = user_sessions[uid] ?? {};
     const state = sess.state ?? "";
+    if (text === BTN_BACK_SETTINGS) { delete user_sessions[uid]; saveSessions(); return sendAdminSettingsMenu(ctx, chatId); }
+    if (state.startsWith("admin_input:")) return handleAdminInput(ctx, chatId, uid, ctx.message.message_id, state.slice("admin_input:".length), text);
 
-    // BTN_BACK_SETTINGS from any admin state
-    if (text === BTN_BACK_SETTINGS) {
-      delete user_sessions[uid]; saveSessions();
-      return sendAdminSettingsMenu(ctx, chatId);
-    }
-
-    // Admin pending input state
-    if (state.startsWith("admin_input:")) {
-      const key = state.slice("admin_input:".length);
-      return handleAdminInput(ctx, chatId, uid, ctx.message.message_id, key, text);
-    }
-
-    // Delete type selection
     if (state === "delete_type_select") {
-      if (text === BTN_BACK_SETTINGS) { delete user_sessions[uid]; saveSessions(); return sendAdminSettingsMenu(ctx, chatId); }
-      const labels = sess.labels || {};
+      const labels   = sess.labels || {};
       const typeName = labels[text];
       if (typeName && accounts_data.account_types[typeName] !== undefined) {
         const count = accounts_data.account_types[typeName].length;
         const price = accounts_data.prices[typeName] ?? 0;
         user_sessions[uid] = { state: "delete_type_confirm", type_name: typeName }; saveSessions();
         return sendMsg(ctx, chatId,
-          `⚠️ <b>តើអ្នកពិតជាចង់លុបប្រភេទ គូប៉ុង នេះមែនទេ?</b>\n\n` +
-          `<blockquote>🔹 ប្រភេទ: ${esc(typeName)}\n🔹 ចំនួន: ${count}\n🔹 តម្លៃ: $${price}</blockquote>`,
+          `⚠️ <b>តើអ្នកពិតជាចង់លុបប្រភេទ គូប៉ុង នេះមែនទេ?</b>\n\n<blockquote>🔹 ប្រភេទ: ${esc(typeName)}\n🔹 ចំនួន: ${count}\n🔹 តម្លៃ: $${price}</blockquote>`,
           Markup.keyboard([[BTN_DELETE_CONFIRM], [BTN_DELETE_CANCEL]]).resize().persistent());
       }
       return;
     }
 
-    // Delete type confirm
     if (state === "delete_type_confirm") {
       const typeName = sess.type_name;
       delete user_sessions[uid]; saveSessions();
       if (text === BTN_DELETE_CONFIRM && typeName) {
         const count = (accounts_data.account_types[typeName] ?? []).length;
-        delete accounts_data.account_types[typeName];
-        delete accounts_data.prices[typeName];
-        saveAccounts();
+        delete accounts_data.account_types[typeName]; delete accounts_data.prices[typeName]; saveAccounts();
         return sendMsg(ctx, chatId, `✅ <b>បានលុបប្រភេទ <code>${esc(typeName)}</code> ចំនួន ${count} records!</b>`, ADMIN_SETTINGS_KB);
       }
       return sendMsg(ctx, chatId, "🚫 <b>បានបោះបង់ការលុប</b>", ADMIN_SETTINGS_KB);
     }
 
-    // Broadcast confirm
     if (state === "broadcast_confirm") {
       const bcastMsgId  = sess.broadcast_message_id;
       const bcastChatId = sess.broadcast_chat_id || chatId;
@@ -893,20 +589,14 @@ bot.on("text", async ctx => {
       if (text === BTN_BROADCAST_CONFIRM && bcastMsgId) {
         await sendMsg(ctx, chatId, "📢 កំពុង​ផ្សាយ​សារ ... សូមរង់ចាំ", ADMIN_SETTINGS_KB);
         runBroadcast(ctx, chatId, bcastChatId, bcastMsgId, useCopy);
-      } else {
-        await sendMsg(ctx, chatId, "🚫 <b>បាន​បោះបង់​ការ​ផ្សាយ</b>", ADMIN_SETTINGS_KB);
-      }
+      } else { await sendMsg(ctx, chatId, "🚫 <b>បាន​បោះបង់​ការ​ផ្សាយ</b>", ADMIN_SETTINGS_KB); }
       return;
     }
 
-    // Waiting for accounts (coupon input)
     if (state === "waiting_for_accounts") {
-      if (text === BTN_BACK_SETTINGS || text === BTN_CANCEL_INPUT) {
-        delete user_sessions[uid]; saveSessions(); return sendAdminSettingsMenu(ctx, chatId);
-      }
+      if (text === BTN_BACK_SETTINGS || text === BTN_CANCEL_INPUT) { delete user_sessions[uid]; saveSessions(); return sendAdminSettingsMenu(ctx, chatId); }
       const lines = text.split("\n").map(l => l.trim()).filter(Boolean);
       if (!lines.length) return sendMsg(ctx, chatId, "<b>អ៊ីមែលមិនត្រឹមត្រូវតាមទម្រង់</b>", ADD_ACCOUNT_KB);
-
       const newAccounts = lines.map(l => {
         if (l.includes("|")) { const [ph, pw] = l.split("|").map(s => s.trim()); return { phone: ph, password: pw }; }
         return { code: l };
@@ -914,209 +604,124 @@ bot.on("text", async ctx => {
       const existingTypes = Object.keys(accounts_data.account_types);
       user_sessions[uid] = { state: "waiting_for_account_type", accounts: newAccounts }; saveSessions();
       const typeRows = [...existingTypes.map(t => [t]), [BTN_BACK_SETTINGS]];
-      return sendMsg(ctx, chatId,
-        `<b>បានបញ្ចូល គូប៉ុង ចំនួន ${newAccounts.length}\n\nសូមជ្រើសរើស ឬបញ្ចូលប្រភេទ គូប៉ុង៖</b>`,
-        Markup.keyboard(typeRows).resize().persistent());
+      return sendMsg(ctx, chatId, `<b>បានបញ្ចូល គូប៉ុង ចំនួន ${newAccounts.length}\n\nសូមជ្រើសរើស ឬបញ្ចូលប្រភេទ គូប៉ុង៖</b>`, Markup.keyboard(typeRows).resize().persistent());
     }
 
-    // Waiting for account type
     if (state === "waiting_for_account_type") {
-      if (text === BTN_BACK_SETTINGS || text === BTN_CANCEL_INPUT) {
-        delete user_sessions[uid]; saveSessions(); return sendAdminSettingsMenu(ctx, chatId);
-      }
+      if (text === BTN_BACK_SETTINGS || text === BTN_CANCEL_INPUT) { delete user_sessions[uid]; saveSessions(); return sendAdminSettingsMenu(ctx, chatId); }
       const existingPrice = accounts_data.prices[text];
       user_sessions[uid] = { ...sess, state: "waiting_for_price", account_type: text }; saveSessions();
-      if (existingPrice != null) {
-        return sendMsg(ctx, chatId,
-          `<b>ប្រភេទ <code>${esc(text)}</code> មានស្រាប់ ដែលមានតម្លៃ ${existingPrice}$\n\nតម្លៃត្រូវតែដូចគ្នា (${existingPrice}$) ដើម្បីបន្ថែម គូប៉ុង</b>`,
-          ADD_ACCOUNT_KB);
-      }
+      if (existingPrice != null) return sendMsg(ctx, chatId, `<b>ប្រភេទ <code>${esc(text)}</code> មានស្រាប់ ដែលមានតម្លៃ ${existingPrice}$\n\nតម្លៃត្រូវតែដូចគ្នា (${existingPrice}$) ដើម្បីបន្ថែម គូប៉ុង</b>`, ADD_ACCOUNT_KB);
       return sendMsg(ctx, chatId, `<b>សូមដាក់តម្លៃក្នុងប្រភេទ គូប៉ុង ${esc(text)}</b>`, ADD_ACCOUNT_KB);
     }
 
-    // Waiting for price
     if (state === "waiting_for_price") {
-      if (text === BTN_BACK_SETTINGS || text === BTN_CANCEL_INPUT) {
-        delete user_sessions[uid]; saveSessions(); return sendAdminSettingsMenu(ctx, chatId);
-      }
+      if (text === BTN_BACK_SETTINGS || text === BTN_CANCEL_INPUT) { delete user_sessions[uid]; saveSessions(); return sendAdminSettingsMenu(ctx, chatId); }
       const price = parseFloat(text.replace("$", "").trim());
       if (isNaN(price) || price < 0) return sendMsg(ctx, chatId, "តម្លៃមិនត្រឹមត្រូវ។ សូមបញ្ចូលតម្លៃជាលេខ (ឧ: 5.99)");
-
-      const accountType = sess.account_type;
-      const accsToAdd   = sess.accounts ?? [];
+      const accountType   = sess.account_type;
+      const accsToAdd     = sess.accounts ?? [];
       const existingPrice = accounts_data.prices[accountType];
       if (existingPrice != null && Math.round(existingPrice * 10000) !== Math.round(price * 10000)) {
-        return sendMsg(ctx, chatId,
-          `❌ <b>មិនអាចបញ្ចូលបាន!</b>\n\nប្រភេទ <code>${esc(accountType)}</code> មានតម្លៃ <b>${existingPrice}$</b> ស្រាប់។\nតម្លៃ <b>${price}$</b> មិនដូចគ្នា។ សូមប្រើ <b>${existingPrice}$</b>`,
-          ADD_ACCOUNT_KB);
+        return sendMsg(ctx, chatId, `❌ <b>មិនអាចបញ្ចូលបាន!</b>\n\nប្រភេទ <code>${esc(accountType)}</code> មានតម្លៃ <b>${existingPrice}$</b> ស្រាប់។\nតម្លៃ <b>${price}$</b> មិនដូចគ្នា។ សូមប្រើ <b>${existingPrice}$</b>`, ADD_ACCOUNT_KB);
       }
-
-      const allExisting = new Set(
-        Object.values(accounts_data.account_types).flat()
-          .map(a => (a.code || a.email || a.phone || "").toLowerCase())
-          .filter(Boolean)
-      );
+      const allExisting = new Set(Object.values(accounts_data.account_types).flat().map(a => (a.code || a.email || a.phone || "").toLowerCase()).filter(Boolean));
       const toAdd  = accsToAdd.filter(a => !allExisting.has((a.code || a.email || a.phone || "").toLowerCase()));
       const dupes  = accsToAdd.length - toAdd.length;
-
       if (!accounts_data.account_types[accountType]) accounts_data.account_types[accountType] = [];
       accounts_data.account_types[accountType].push(...toAdd);
       accounts_data.prices[accountType] = Math.round(price * 10000) / 10000;
-      saveAccounts();
-      delete user_sessions[uid]; saveSessions();
-
-      await sendMsg(ctx, chatId,
-        `✅ <b>បានបញ្ចូល គូប៉ុង ដោយជោគជ័យ</b>\n\n<blockquote>🔹 ចំនួន: ${toAdd.length}\n🔹 ប្រភេទ: ${esc(accountType)}\n🔹 តម្លៃ: ${price}$</blockquote>` +
-        (dupes ? `\n\n⚠️ ដដែល (រំលង): ${dupes}` : ""));
+      saveAccounts(); delete user_sessions[uid]; saveSessions();
+      await sendMsg(ctx, chatId, `✅ <b>បានបញ្ចូល គូប៉ុង ដោយជោគជ័យ</b>\n\n<blockquote>🔹 ចំនួន: ${toAdd.length}\n🔹 ប្រភេទ: ${esc(accountType)}\n🔹 តម្លៃ: ${price}$</blockquote>` + (dupes ? `\n\n⚠️ ដដែល (រំលង): ${dupes}` : ""));
       return sendAdminSettingsMenu(ctx, chatId);
     }
 
-    // Admin button dispatcher
     if (ADMIN_BUTTON_LABELS.has(text)) return dispatchAdminButton(ctx, chatId, uid, text);
   }
 
-  // ── User: 💵 ទិញគូប៉ុង ───────────────────────────────────────────────────
   if (text === "💵 ទិញគូប៉ុង") {
     const sess = user_sessions[uid];
-    if (sess?.state === "payment_pending") {
-      return sendMsg(ctx, chatId,
-        "⏳ <b>សូមបញ្ចប់ការទិញបច្ចុប្បន្នជាមុនសិន</b>\n\nអ្នកមានការបញ្ជាទិញមួយកំពុងដំណើរការ។ " +
-        "សូមបញ្ចប់ការទូទាត់ ឬចុច <b>🚫 បោះបង់</b> មុននឹងចាប់ផ្ដើមការទិញថ្មី។");
-    }
+    if (sess?.state === "payment_pending") return sendMsg(ctx, chatId, "⏳ <b>សូមបញ្ចប់ការទិញបច្ចុប្បន្នជាមុនសិន</b>\n\nអ្នកមានការបញ្ជាទិញមួយកំពុងដំណើរការ។ សូមបញ្ចប់ការទូទាត់ ឬចុច <b>🚫 បោះបង់</b> មុននឹងចាប់ផ្ដើមការទិញថ្មី។");
     delete user_sessions[uid];
     return showAccountSelection(ctx, chatId);
   }
 
-  // Default fallback
-  if (user_sessions[uid]?.state === "payment_pending") {
-    return sendMsg(ctx, chatId, "⏳ <b>សូមបញ្ចប់ការទូទាត់ QR ជាមុនសិន</b>\nឬចុច <b>🚫 បោះបង់</b> ដើម្បីបោះបង់", CHECK_PAYMENT_INLINE);
-  }
+  if (user_sessions[uid]?.state === "payment_pending") return sendMsg(ctx, chatId, "⏳ <b>សូមបញ្ចប់ការទូទាត់ QR ជាមុនសិន</b>\nឬចុច <b>🚫 បោះបង់</b> ដើម្បីបោះបង់", CHECK_PAYMENT_INLINE);
   await showAccountSelection(ctx, chatId);
 });
 
-
-// ── 20. Admin button dispatcher ───────────────────────────────────────────────
 async function dispatchAdminButton(ctx, chatId, uid, btn) {
   switch (btn) {
     case BTN_ADD_ACCOUNT:
       user_sessions[uid] = { state: "waiting_for_accounts" }; saveSessions();
       return sendMsg(ctx, chatId, "<b>បញ្ចូលគូប៉ុងសម្រាប់លក់</b>", ADD_ACCOUNT_KB);
-
     case BTN_DELETE_TYPE: {
       const types = Object.keys(accounts_data.account_types);
       if (!types.length) return sendMsg(ctx, chatId, "⚠️ <b>មិនមានប្រភេទ គូប៉ុង ណាមួយទេ!</b>");
       const labelsMap = {};
-      const rows = types.map(t => {
-        const count = accounts_data.account_types[t].length;
-        const label = `${shortLabel(t)} – មានក្នុងស្តុក ${count}`;
-        labelsMap[label] = t;
-        return [label];
-      });
+      const rows = types.map(t => { const count = accounts_data.account_types[t].length; const label = `${shortLabel(t)} – មានក្នុងស្តុក ${count}`; labelsMap[label] = t; return [label]; });
       rows.push([BTN_BACK_SETTINGS]);
       user_sessions[uid] = { state: "delete_type_select", labels: labelsMap }; saveSessions();
-      return sendMsg(ctx, chatId, "🗑 <b>ជ្រើសរើសប្រភេទ គូប៉ុង ដែលចង់លុប៖</b>",
-        Markup.keyboard(rows).resize().persistent());
+      return sendMsg(ctx, chatId, "🗑 <b>ជ្រើសរើសប្រភេទ គូប៉ុង ដែលចង់លុប៖</b>", Markup.keyboard(rows).resize().persistent());
     }
-
-    case BTN_STOCK:       return exportStock(ctx, chatId);
-    case BTN_BUYERS:      return exportBuyers(ctx, chatId);
-    case BTN_USERS:       return showUsersList(ctx, chatId);
-
-    case BTN_KHPAY:
-      return sendMsg(ctx, chatId,
-        `💰 <b>KhPay API Key បច្ចុប្បន្ន៖</b>\n\n<code>${esc(KHPAY_API_KEY)}</code>`,
-        KHPAY_SUBMENU_KB);
-
+    case BTN_STOCK:    return exportStock(ctx, chatId);
+    case BTN_BUYERS:   return exportBuyers(ctx, chatId);
+    case BTN_USERS:    return showUsersList(ctx, chatId);
+    case BTN_KHPAY:    return sendMsg(ctx, chatId, `💰 <b>KhPay API Key បច្ចុប្បន្ន៖</b>\n\n<code>${esc(KHPAY_API_KEY)}</code>`, KHPAY_SUBMENU_KB);
     case BTN_KHPAY_KEY_EDIT:
       user_sessions[uid] = { state: "admin_input:khpay_key" }; saveSessions();
       return sendMsg(ctx, chatId, "💰 សូមផ្ញើ <b>KhPay API Key</b> ថ្មី:\n\n<i>ចុច 🚫 បោះបង់ ដើម្បីបោះបង់</i>", CANCEL_INPUT_KB);
-
-    case BTN_KHPAY_INFO:
-      return sendKhpayInfo(ctx, chatId);
-
+    case BTN_KHPAY_INFO: return sendKhpayInfo(ctx, chatId);
     case BTN_CHANNEL: {
       const cur = CHANNEL_ID || "(មិនទាន់កំណត់)";
-      return sendMsg(ctx, chatId,
-        `📢 <b>Channel ID បច្ចុប្បន្ន៖</b>\n<code>${esc(String(cur))}</code>`,
-        CHANNEL_SUBMENU_KB);
+      return sendMsg(ctx, chatId, `📢 <b>Channel ID បច្ចុប្បន្ន៖</b>\n<code>${esc(String(cur))}</code>`, CHANNEL_SUBMENU_KB);
     }
-
     case BTN_CHANNEL_EDIT:
       user_sessions[uid] = { state: "admin_input:channel" }; saveSessions();
-      return sendMsg(ctx, chatId,
-        "📢 សូមផ្ញើ <b>Channel ID</b> ថ្មី (ឧ. <code>-1001234567890</code>):\n\n<i>ចុច 🚫 បោះបង់ ដើម្បីបោះបង់</i>",
-        CANCEL_INPUT_KB);
-
+      return sendMsg(ctx, chatId, "📢 សូមផ្ញើ <b>Channel ID</b> ថ្មី (ឧ. <code>-1001234567890</code>):\n\n<i>ចុច 🚫 បោះបង់ ដើម្បីបោះបង់</i>", CANCEL_INPUT_KB);
     case BTN_CHANNEL_CLEAR:
       CHANNEL_ID = ""; setSetting("TELEGRAM_CHANNEL_ID", "");
       return sendMsg(ctx, chatId, "✅ បានលុប Channel ID", ADMIN_SETTINGS_KB);
-
     case BTN_ADMINS: {
-      const extras = [...EXTRA_ADMIN_IDS].sort();
+      const extras    = [...EXTRA_ADMIN_IDS].sort();
       const extrasStr = extras.length ? extras.map(x => `• <code>${x}</code>`).join("\n") : "(គ្មាន)";
-      return sendMsg(ctx, chatId,
-        `👑 <b>Admin បឋម៖</b> <code>${ADMIN_ID}</code>\n\n➕ <b>Admin បន្ថែម៖</b>\n${extrasStr}`,
-        ADMINS_SUBMENU_KB);
+      return sendMsg(ctx, chatId, `👑 <b>Admin បឋម៖</b> <code>${ADMIN_ID}</code>\n\n➕ <b>Admin បន្ថែម៖</b>\n${extrasStr}`, ADMINS_SUBMENU_KB);
     }
-
     case BTN_ADMIN_ADD:
       user_sessions[uid] = { state: "admin_input:admin_add" }; saveSessions();
       return sendMsg(ctx, chatId, "➕ សូមផ្ញើ <b>Telegram User ID</b> ដែលចង់បន្ថែម:", CANCEL_INPUT_KB);
-
     case BTN_ADMIN_REMOVE:
       user_sessions[uid] = { state: "admin_input:admin_remove" }; saveSessions();
       return sendMsg(ctx, chatId, "➖ សូមផ្ញើ <b>Telegram User ID</b> ដែលចង់ដក:", CANCEL_INPUT_KB);
-
     case BTN_MAINTENANCE: {
       const status = MAINTENANCE_MODE ? "🔴 បិទ" : "🟢 បើក";
       return sendMsg(ctx, chatId, `🛠 <b>ស្ថានភាព Bot បច្ចុប្បន្ន៖</b> ${status}`, MAINTENANCE_SUBMENU_KB);
     }
-
-    case BTN_MAINT_ON:
-      MAINTENANCE_MODE = true; setSetting("MAINTENANCE_MODE", "true");
-      return sendMsg(ctx, chatId, "🔴 បានបិទ Bot", ADMIN_SETTINGS_KB);
-
-    case BTN_MAINT_OFF:
-      MAINTENANCE_MODE = false; setSetting("MAINTENANCE_MODE", "false");
-      return sendMsg(ctx, chatId, "🟢 បានបើក Bot", ADMIN_SETTINGS_KB);
-
+    case BTN_MAINT_ON:  MAINTENANCE_MODE = true;  setSetting("MAINTENANCE_MODE", "true");  return sendMsg(ctx, chatId, "🔴 បានបិទ Bot", ADMIN_SETTINGS_KB);
+    case BTN_MAINT_OFF: MAINTENANCE_MODE = false; setSetting("MAINTENANCE_MODE", "false"); return sendMsg(ctx, chatId, "🟢 បានបើក Bot", ADMIN_SETTINGS_KB);
     case BTN_BROADCAST:
       user_sessions[uid] = { state: "admin_input:broadcast" }; saveSessions();
-      return sendMsg(ctx, chatId,
-        "📢 សូមផ្ញើ​សារ​ដែល​ចង់​ផ្សាយ​ទៅ​អ្នក​ប្រើ​ប្រាស់​ទាំង​អស់៖\n\n<i>ចុច 🚫 បោះបង់ ដើម្បីបោះបង់</i>",
-        CANCEL_INPUT_KB);
-
-    default:
-      return sendAdminSettingsMenu(ctx, chatId);
+      return sendMsg(ctx, chatId, "📢 សូមផ្ញើ​សារ​ដែល​ចង់​ផ្សាយ​ទៅ​អ្នក​ប្រើ​ប្រាស់​ទាំង​អស់៖\n\n<i>ចុច 🚫 បោះបង់ ដើម្បីបោះបង់</i>", CANCEL_INPUT_KB);
+    default: return sendAdminSettingsMenu(ctx, chatId);
   }
 }
 
-// ── 21. Admin input handlers ──────────────────────────────────────────────────
 async function handleAdminInput(ctx, chatId, uid, msgId, key, text) {
   const cancelWords = new Set(["បោះបង់", "🚫 បោះបង់", BTN_CANCEL_INPUT, BTN_BACK_SETTINGS]);
-  if (cancelWords.has(text)) {
-    delete user_sessions[uid]; saveSessions();
-    return sendAdminSettingsMenu(ctx, chatId);
-  }
+  if (cancelWords.has(text)) { delete user_sessions[uid]; saveSessions(); return sendAdminSettingsMenu(ctx, chatId); }
 
   if (key === "khpay_key") {
     if (!text || !text.startsWith("ak_")) return sendMsg(ctx, chatId, "❌ KhPay API Key ត្រូវចាប់ផ្ដើមដោយ <code>ak_</code>\n\nសូមផ្ញើ Key ត្រឹមត្រូវ (ឬចុច 🚫 បោះបង់)");
-    KHPAY_API_KEY = text;
-    setSetting("KHPAY_API_KEY", text);
+    KHPAY_API_KEY = text; setSetting("KHPAY_API_KEY", text);
     delete user_sessions[uid]; saveSessions();
     deleteMsg(ctx, chatId, msgId).catch(() => {});
-    return sendMsg(ctx, chatId,
-      `✅ បានប្តូរ <b>KhPay API Key</b>\n<code>${esc(text.slice(0, 12))}…${esc(text.slice(-4))}</code>`,
-      mainKb(uid));
+    return sendMsg(ctx, chatId, `✅ បានប្តូរ <b>KhPay API Key</b>\n<code>${esc(text.slice(0, 12))}…${esc(text.slice(-4))}</code>`, mainKb(uid));
   }
 
   if (key === "channel") {
     if (!text) return sendMsg(ctx, chatId, "សូមផ្ញើ Channel ID ថ្មី ឬ <code>off</code> ដើម្បីបិទ");
-    if (["off","none","clear","delete","remove"].includes(text.toLowerCase())) {
-      CHANNEL_ID = ""; setSetting("TELEGRAM_CHANNEL_ID", "");
-    } else {
-      CHANNEL_ID = text; setSetting("TELEGRAM_CHANNEL_ID", text);
-    }
+    if (["off","none","clear","delete","remove"].includes(text.toLowerCase())) { CHANNEL_ID = ""; setSetting("TELEGRAM_CHANNEL_ID", ""); }
+    else { CHANNEL_ID = text; setSetting("TELEGRAM_CHANNEL_ID", text); }
     delete user_sessions[uid]; saveSessions();
     return sendMsg(ctx, chatId, `✅ បានកំណត់ Channel ID ទៅជា <code>${esc(CHANNEL_ID || "(ទទេ)")}</code>`, mainKb(uid));
   }
@@ -1125,8 +730,7 @@ async function handleAdminInput(ctx, chatId, uid, msgId, key, text) {
     const target = parseInt(text, 10);
     if (isNaN(target)) return sendMsg(ctx, chatId, "❌ user_id ត្រូវតែជាលេខ (ឬចុច 🚫 បោះបង់)");
     if (target === ADMIN_ID) { delete user_sessions[uid]; saveSessions(); return sendMsg(ctx, chatId, "ℹ️ Admin បឋមមិនអាចលុប/បន្ថែមបានទេ។", mainKb(uid)); }
-    EXTRA_ADMIN_IDS.add(target);
-    setSetting("EXTRA_ADMIN_IDS", JSON.stringify([...EXTRA_ADMIN_IDS]));
+    EXTRA_ADMIN_IDS.add(target); setSetting("EXTRA_ADMIN_IDS", JSON.stringify([...EXTRA_ADMIN_IDS]));
     delete user_sessions[uid]; saveSessions();
     return sendMsg(ctx, chatId, `✅ បានបន្ថែម <code>${target}</code> ជា admin`);
   }
@@ -1134,44 +738,29 @@ async function handleAdminInput(ctx, chatId, uid, msgId, key, text) {
   if (key === "admin_remove") {
     const target = parseInt(text, 10);
     if (isNaN(target)) return sendMsg(ctx, chatId, "❌ user_id ត្រូវតែជាលេខ (ឬចុច 🚫 បោះបង់)");
-    EXTRA_ADMIN_IDS.delete(target);
-    setSetting("EXTRA_ADMIN_IDS", JSON.stringify([...EXTRA_ADMIN_IDS]));
+    EXTRA_ADMIN_IDS.delete(target); setSetting("EXTRA_ADMIN_IDS", JSON.stringify([...EXTRA_ADMIN_IDS]));
     delete user_sessions[uid]; saveSessions();
     return sendMsg(ctx, chatId, `✅ បានដក <code>${target}</code> ចាក admin`);
   }
 
-
   if (key === "broadcast") {
-    // Store message for forward/copy broadcast
-    user_sessions[uid] = {
-      state: "broadcast_confirm",
-      broadcast_message_id:  ctx.message.message_id,
-      broadcast_chat_id:     chatId,
-      broadcast_use_copy:    true,
-      broadcast_text:        text,
-    }; saveSessions();
-    return sendMsg(ctx, chatId,
-      `📢 <b>ព្រមព្រៀងផ្សាយ:</b>\n\n${esc(text)}\n\n<i>ផ្សាយទៅអ្នកប្រើ ${Object.keys(known_users).length} នាក់</i>`,
-      BROADCAST_CONFIRM_KB);
+    user_sessions[uid] = { state: "broadcast_confirm", broadcast_message_id: ctx.message.message_id, broadcast_chat_id: chatId, broadcast_use_copy: true, broadcast_text: text };
+    saveSessions();
+    return sendMsg(ctx, chatId, `📢 <b>ព្រមព្រៀងផ្សាយ:</b>\n\n${esc(text)}\n\n<i>ផ្សាយទៅអ្នកប្រើ ${Object.keys(known_users).length} នាក់</i>`, BROADCAST_CONFIRM_KB);
   }
 }
 
-// ── 22. Broadcast ─────────────────────────────────────────────────────────────
 async function runBroadcast(ctx, adminChatId, srcChatId, srcMsgId, useCopy) {
   const uids = Object.keys(known_users);
   let sent = 0, failed = 0, blocked = 0;
   for (const uidStr of uids) {
     const uid = Number(uidStr);
     try {
-      if (useCopy) {
-        await ctx.telegram.copyMessage(uid, srcChatId, srcMsgId);
-      } else {
-        await ctx.telegram.forwardMessage(uid, srcChatId, srcMsgId);
-      }
+      if (useCopy) { await ctx.telegram.copyMessage(uid, srcChatId, srcMsgId); }
+      else { await ctx.telegram.forwardMessage(uid, srcChatId, srcMsgId); }
       sent++;
     } catch (e) {
-      if (e.message?.includes("blocked") || e.message?.includes("deactivated")) blocked++;
-      else failed++;
+      if (e.message?.includes("blocked") || e.message?.includes("deactivated")) blocked++; else failed++;
     }
     await new Promise(r => setTimeout(r, 50));
   }
@@ -1184,249 +773,147 @@ async function runBroadcast(ctx, adminChatId, srcChatId, srcMsgId, useCopy) {
     `❌ បរាជ័យ:        ${failed}`, ADMIN_SETTINGS_KB);
 }
 
-// ── 23. Stock / Buyers / Users exports ───────────────────────────────────────
 async function exportStock(ctx, chatId) {
   const types  = accounts_data.account_types;
   const prices = accounts_data.prices;
   const names  = Object.keys(types).sort();
-
-  if (!names.length) {
-    return sendMsg(ctx, chatId, "📦 មិនមានប្រភេទ គូប៉ុង ឡើយទេ។", ADMIN_SETTINGS_KB);
-  }
-
+  if (!names.length) return sendMsg(ctx, chatId, "📦 មិនមានប្រភេទ គូប៉ុង ឡើយទេ។", ADMIN_SETTINGS_KB);
   const totalAvail = names.reduce((s, t) => s + (types[t] || []).length, 0);
   const now_str = nowKH();
   const W = 60;
-  const lines = [
-    "=".repeat(W),
-    "  ស្តុក គូប៉ុង / COUPON STOCK".padEnd(W),
-    `  ${now_str}`.padEnd(W),
-    `  ប្រភេទ: ${names.length}  |  សរុប: ${totalAvail} គូប៉ុង`.padEnd(W),
-    "=".repeat(W),
-    "",
-  ];
-
+  const lines = ["=".repeat(W), "  ស្តុក គូប៉ុង / COUPON STOCK".padEnd(W), `  ${now_str}`.padEnd(W), `  ប្រភេទ: ${names.length}  |  សរុប: ${totalAvail} គូប៉ុង`.padEnd(W), "=".repeat(W), ""];
   for (const t of names) {
     const pool  = types[t] || [];
     const price = prices[t] ?? 0;
-    lines.push(`[ ${t} ]  💰 $${price}  📦 ${pool.length} គូប៉ុង`);
-    lines.push("─".repeat(W));
-    if (pool.length) {
-      pool.forEach((acc, i) => lines.push(`  ${i + 1}. ${formatAccount(acc)}`));
-    } else {
-      lines.push("  (គ្មានក្នុងស្តុក)");
-    }
+    lines.push(`[ ${t} ]  💰 $${price}  📦 ${pool.length} គូប៉ុង`, "─".repeat(W));
+    if (pool.length) { pool.forEach((acc, i) => lines.push(`  ${i + 1}. ${formatAccount(acc)}`)); }
+    else { lines.push("  (គ្មានក្នុងស្តុក)"); }
     lines.push("");
   }
   lines.push("=".repeat(W));
-
-  const content = lines.join("\n");
-  const buf = Buffer.from(content, "utf8");
+  const buf = Buffer.from(lines.join("\n"), "utf8");
   const filename = `stock_${nowKHFile()}.txt`;
-
-  await ctx.telegram.sendDocument(chatId, { source: buf, filename }, {
-    caption: `📦 <b>ស្តុក គូប៉ុង</b> — ${names.length} ប្រភេទ, ${totalAvail} នៅសល់`,
-    parse_mode: "HTML",
-  });
-
+  await ctx.telegram.sendDocument(chatId, { source: buf, filename }, { caption: `📦 <b>ស្តុក គូប៉ុង</b> — ${names.length} ប្រភេទ, ${totalAvail} នៅសល់`, parse_mode: "HTML" });
   return sendAdminSettingsMenu(ctx, chatId);
 }
 
 async function exportBuyers(ctx, chatId) {
-  if (!purchases.length) {
-    return sendMsg(ctx, chatId, "មិនមានទិន្នន័យ​ទិញ​នៅឡើយ​ទេ។", ADMIN_SETTINGS_KB);
-  }
+  if (!purchases.length) return sendMsg(ctx, chatId, "មិនមានទិន្នន័យ​ទិញ​នៅឡើយ​ទេ។", ADMIN_SETTINGS_KB);
   const grouped = {};
   for (const p of purchases) {
     const uid = String(p.user_id);
-    if (!grouped[uid]) {
-      const u = known_users[uid] || {};
-      grouped[uid] = { first_name: u.first_name || "", last_name: u.last_name || "", username: u.username || "", purchases: [] };
-    }
+    if (!grouped[uid]) { const u = known_users[uid] || {}; grouped[uid] = { first_name: u.first_name || "", last_name: u.last_name || "", username: u.username || "", purchases: [] }; }
     grouped[uid].purchases.push(p);
   }
-  const W = 60;
-  const now_str = nowKH();
-  const lines = [
-    "=".repeat(W),
-    "  BUYERS REPORT".padStart((W + 14) / 2).padEnd(W),
-    `  ${now_str}`.padEnd(W),
-    "=".repeat(W),
-    `  Total buyers : ${Object.keys(grouped).length}`,
-  ];
+  const W = 60, now_str = nowKH();
+  const lines = ["=".repeat(W), "  BUYERS REPORT".padStart((W + 14) / 2).padEnd(W), `  ${now_str}`.padEnd(W), "=".repeat(W), `  Total buyers : ${Object.keys(grouped).length}`];
   for (const [uid, info] of Object.entries(grouped)) {
     const fn = [info.first_name, info.last_name].filter(Boolean).join(" ") || "(no name)";
     const un = info.username ? `@${info.username}` : "—";
-    lines.push("", "─".repeat(W),
-      `  ID       : ${uid}`, `  Name     : ${fn}`, `  Username : ${un}`,
-      `  Purchases: ${info.purchases.length}`, "─".repeat(W));
+    lines.push("", "─".repeat(W), `  ID       : ${uid}`, `  Name     : ${fn}`, `  Username : ${un}`, `  Purchases: ${info.purchases.length}`, "─".repeat(W));
     info.purchases.forEach((p, i) => {
       const when = fmtKH(p.purchased_at);
-      lines.push(`  [${i+1}] ${p.account_type}`, `      Qty   : ${p.quantity}`,
-        `      Price : $${p.total_price}`, `      Date  : ${when}`, "      Accounts:");
+      lines.push(`  [${i+1}] ${p.account_type}`, `      Qty   : ${p.quantity}`, `      Price : $${p.total_price}`, `      Date  : ${when}`, "      Accounts:");
       (p.accounts || []).forEach(a => lines.push(`        • ${formatAccount(a)}`));
       if (!(p.accounts || []).length) lines.push("        (none)");
     });
   }
   lines.push("", "=".repeat(W), "=".repeat(W));
-
-  const now_ts = nowKHFile();
-  const buf    = Buffer.from(lines.join("\n"), "utf8");
-  await sendDocument(ctx, chatId, buf, `buyers_${now_ts}.txt`,
-    `📋 របាយការណ៍ទិញ — ${Object.keys(grouped).length} អ្នក​ទិញ`);
+  const buf = Buffer.from(lines.join("\n"), "utf8");
+  await sendDocument(ctx, chatId, buf, `buyers_${nowKHFile()}.txt`, `📋 របាយការណ៍ទិញ — ${Object.keys(grouped).length} អ្នក​ទិញ`);
   return sendAdminSettingsMenu(ctx, chatId);
 }
 
 async function showUsersList(ctx, chatId) {
   const rows = Object.entries(known_users);
-  if (!rows.length) {
-    return sendMsg(ctx, chatId, "📭 <b>មិនទាន់មានអ្នកប្រើប្រាស់ទេ។</b>", BACK_SETTINGS_KB);
-  }
+  if (!rows.length) return sendMsg(ctx, chatId, "📭 <b>មិនទាន់មានអ្នកប្រើប្រាស់ទេ។</b>", BACK_SETTINGS_KB);
   const lines = [`👥 អ្នកប្រើប្រាស់សរុប: ${rows.length}`, ""];
   for (const [uid, info] of rows) {
     const full  = [info.first_name, info.last_name].filter(Boolean).join(" ") || "N/A";
     const uname = info.username ? `@${info.username}` : "—";
     lines.push(`${full}`, `   🔖 ${uname}`, `   🪪 ${uid}`, "");
   }
-  const now_ts = nowKHFile();
-  const buf    = Buffer.from(lines.join("\n"), "utf8");
-  await sendDocument(ctx, chatId, buf, `users_${now_ts}.txt`,
-    `👥 បញ្ជីអ្នកប្រើប្រាស់ — ${rows.length} នាក់`);
+  const buf = Buffer.from(lines.join("\n"), "utf8");
+  await sendDocument(ctx, chatId, buf, `users_${nowKHFile()}.txt`, `👥 បញ្ជីអ្នកប្រើប្រាស់ — ${rows.length} នាក់`);
   return sendAdminSettingsMenu(ctx, chatId);
 }
 
-// ── 24. KhPay account info ────────────────────────────────────────────────────
 async function sendKhpayInfo(ctx, chatId) {
   try {
     const data = await khpayRequest("GET", "/me");
-    if (!data.success) {
-      return sendMsg(ctx, chatId,
-        `💰 <b>KhPay API Info</b>\n\n❌ ${esc(data.error || "API Error")}`, KHPAY_SUBMENU_KB);
-    }
+    if (!data.success) return sendMsg(ctx, chatId, `💰 <b>KhPay API Info</b>\n\n❌ ${esc(data.error || "API Error")}`, KHPAY_SUBMENU_KB);
     const d   = data.data;
     const key = KHPAY_API_KEY;
-    const masked = key;
     const lines = [
-      "💰 <b>KhPay Account Info</b>",
-      "━━━━━━━━━━━━━━━━━━━",
-      `👤 <b>ឈ្មោះ:</b> ${esc(d.name || "—")}`,
-      `📧 <b>Email:</b> <code>${esc(d.email || "—")}</code>`,
-      `📦 <b>Plan:</b> ${esc(d.plan || "—")}`,
-      `🔑 <b>API Key:</b> <code>${esc(masked)}</code>`,
+      "💰 <b>KhPay Account Info</b>", "━━━━━━━━━━━━━━━━━━━",
+      `👤 <b>ឈ្មោះ:</b> ${esc(d.name || "—")}`, `📧 <b>Email:</b> <code>${esc(d.email || "—")}</code>`,
+      `📦 <b>Plan:</b> ${esc(d.plan || "—")}`, `🔑 <b>API Key:</b> <code>${esc(key)}</code>`,
       `💳 <b>Bakong:</b> ${d.bakong_configured ? "✅ Configured" : "❌ Not set"}`,
       `🔗 <b>Payway:</b> ${d.payway_link_set ? "✅ Linked" : "❌ Not linked"}`,
-      "━━━━━━━━━━━━━━━━━━━",
-      `📊 <b>ការប្រើប្រាស់ API:</b>`,
-      `   • ថ្ងៃនេះ: ${d.usage?.today ?? 0}`,
-      `   • ខែនេះ: ${d.usage?.month ?? 0}`,
-      `   • សរុប: ${d.usage?.total ?? 0}`,
+      "━━━━━━━━━━━━━━━━━━━", `📊 <b>ការប្រើប្រាស់ API:</b>`,
+      `   • ថ្ងៃនេះ: ${d.usage?.today ?? 0}`, `   • ខែនេះ: ${d.usage?.month ?? 0}`, `   • សរុប: ${d.usage?.total ?? 0}`,
     ];
     return sendMsg(ctx, chatId, lines.join("\n"), KHPAY_SUBMENU_KB);
-  } catch (e) {
-    return sendMsg(ctx, chatId,
-      `💰 <b>KhPay API Info</b>\n\n❌ Error: <code>${esc(e.message)}</code>`, KHPAY_SUBMENU_KB);
-  }
+  } catch (e) { return sendMsg(ctx, chatId, `💰 <b>KhPay API Info</b>\n\n❌ Error: <code>${esc(e.message)}</code>`, KHPAY_SUBMENU_KB); }
 }
 
-// ── 25. Recovery of pending sessions after restart ────────────────────────────
 async function recoverPendingSessions() {
   const pending = Object.entries(user_sessions).filter(([, s]) => s.state === "payment_pending");
   if (!pending.length) return;
   console.log(`[INFO] Recovery: ${pending.length} pending session(s) found — watchdog will handle them`);
-
   const fakeCtx = { telegram: bot.telegram };
   for (const [uidStr] of pending) {
     const uid = Number(uidStr);
-    await sendMsg(fakeCtx, uid,
-      "⚠️ <b>Bot បានចាប់ផ្ដើមឡើងវិញ!</b>\n\nQR Code របស់អ្នកនៅតែដំណើរការ។ សូមមើលរូប QR ចាស់ ឬរង់ចាំ…"
-    ).catch(() => {});
+    await sendMsg(fakeCtx, uid, "⚠️ <b>Bot បានចាប់ផ្ដើមឡើងវិញ!</b>\n\nQR Code របស់អ្នកនៅតែដំណើរការ។ សូមមើលរូប QR ចាស់ ឬរង់ចាំ…").catch(() => {});
   }
 }
 
-// ── 26. Startup ───────────────────────────────────────────────────────────────
 function loadAll() {
-  const db       = readDB();
-  settings       = db.settings   ?? {};
-  const raw      = db.accounts   ?? {};
-  accounts_data  = { account_types: raw.account_types ?? {}, prices: raw.prices ?? {} };
-  known_users    = db.users      ?? {};
-  purchases      = db.purchases  ?? [];
-  const stored   = db.sessions   ?? {};
+  const db = readDB();
+  settings      = db.settings   ?? {};
+  const raw     = db.accounts   ?? {};
+  accounts_data = { account_types: raw.account_types ?? {}, prices: raw.prices ?? {} };
+  known_users   = db.users      ?? {};
+  purchases     = db.purchases  ?? [];
+  const stored  = db.sessions   ?? {};
   for (const [k, v] of Object.entries(stored)) user_sessions[Number(k)] = v;
-
-  // Restore settings
-  const pm = getSetting("PAYMENT_NAME");       if (pm)   PAYMENT_NAME = pm;
-  const mm = getSetting("MAINTENANCE_MODE");   if (mm)   MAINTENANCE_MODE = mm === "true";
-  const ch = getSetting("TELEGRAM_CHANNEL_ID"); if (ch) CHANNEL_ID = ch;
-  const kk = getSetting("KHPAY_API_KEY");      if (kk)   KHPAY_API_KEY = kk;
-  const ea = getSetting("EXTRA_ADMIN_IDS");    if (ea)   { try { EXTRA_ADMIN_IDS = new Set(JSON.parse(ea).map(Number)); } catch {} }
-  // Persistent webhook secret — generate once, reuse on restart
+  const pm = getSetting("PAYMENT_NAME");        if (pm)  PAYMENT_NAME    = pm;
+  const mm = getSetting("MAINTENANCE_MODE");    if (mm)  MAINTENANCE_MODE = mm === "true";
+  const ch = getSetting("TELEGRAM_CHANNEL_ID"); if (ch)  CHANNEL_ID      = ch;
+  const kk = getSetting("KHPAY_API_KEY");       if (kk)  KHPAY_API_KEY   = kk;
+  const ea = getSetting("EXTRA_ADMIN_IDS");     if (ea)  { try { EXTRA_ADMIN_IDS = new Set(JSON.parse(ea).map(Number)); } catch {} }
   let whs = getSetting("WEBHOOK_SECRET");
   if (!whs) { whs = crypto.randomBytes(16).toString("hex"); setSetting("WEBHOOK_SECRET", whs); }
   WEBHOOK_SECRET = whs;
   WEBHOOK_URL    = `https://${process.env.REPLIT_DEV_DOMAIN || "localhost"}/khpay-webhook?secret=${WEBHOOK_SECRET}`;
-
   const couponCount = Object.values(accounts_data.account_types).reduce((s, a) => s + a.length, 0);
   console.log(`[INFO] Loaded: ${couponCount} coupons, ${Object.keys(known_users).length} users, ${purchases.length} purchases`);
 }
 
-// ── E-GetS channel monitor ────────────────────────────────────────────────────
 bot.on("channel_post", async ctx => {
   try {
     const text = ctx.channelPost?.text || ctx.channelPost?.caption || "";
     if (!text) return;
-
-    // Only process E-GetS verification emails
     if (!text.includes("noreply@e-gets.com") && !text.includes("e-gets.com")) return;
-
-    // Extract email after "📧 ទៅ:" — flexible: handles special chars & spaces
     const emailMatch = text.match(/📧[^\n:]*:\s*([^\s\n]+)/);
-    if (!emailMatch) {
-      console.log("[EGets] Received E-GetS message but could not extract email.");
-      return;
-    }
+    if (!emailMatch) { console.log("[EGets] Received E-GetS message but could not extract email."); return; }
     const email = emailMatch[1].trim();
-
-    // Extract verification code — any standalone number (4-8 digits) on its own line
     const codeMatch = text.match(/^\s*(\d{4,8})\s*$/m);
-    if (!codeMatch) {
-      console.log(`[EGets] Received E-GetS message for ${email} but could not extract code.`);
-      return;
-    }
+    if (!codeMatch) { console.log(`[EGets] Received E-GetS message for ${email} but could not extract code.`); return; }
     const code = codeMatch[1].trim();
-
     console.log(`[EGets] Detected code=${code} for email=${email}`);
-
-    // Find all buyers who purchased this email (case-insensitive)
-    const matched = purchases.filter(p =>
-      (p.accounts || []).some(a =>
-        (a.email || a.code || "").trim().toLowerCase() === email.toLowerCase()
-      )
-    );
-
-    if (!matched.length) {
-      console.log(`[EGets] No buyer found for ${email} — skipping.`);
-      return;
-    }
-
-    // Send to each unique buyer immediately
+    const matched = purchases.filter(p => (p.accounts || []).some(a => (a.email || a.code || "").trim().toLowerCase() === email.toLowerCase()));
+    if (!matched.length) { console.log(`[EGets] No buyer found for ${email} — skipping.`); return; }
     const sent = new Set();
     for (const p of matched) {
       const uid = p.user_id;
       if (sent.has(uid)) continue;
       sent.add(uid);
-      const msg =
-        `📩 <b>លេខកូដផ្ទៀងផ្ទាត់ E-GetS</b>\n\n` +
-        `<code>${esc(email)}</code>\n\n` +
-        `<code>${code}</code>`;
-      await ctx.telegram.sendMessage(uid, msg, { parse_mode: "HTML" }).catch(e =>
-        console.warn(`[EGets] Failed to send to ${uid}:`, e.message)
-      );
+      const msg = `📩 <b>លេខកូដផ្ទៀងផ្ទាត់ E-GetS</b>\n\n<code>${esc(email)}</code>\n\n<code>${code}</code>`;
+      await ctx.telegram.sendMessage(uid, msg, { parse_mode: "HTML" }).catch(e => console.warn(`[EGets] Failed to send to ${uid}:`, e.message));
       console.log(`[EGets] ✅ Code ${code} sent to buyer ${uid} for ${email}`);
     }
-  } catch (e) {
-    console.warn("[EGets] channel_post error:", e.message);
-  }
+  } catch (e) { console.warn("[EGets] channel_post error:", e.message); }
 });
 
 bot.catch((err, ctx) => {
