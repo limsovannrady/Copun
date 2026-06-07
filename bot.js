@@ -19,7 +19,7 @@ let   MAINTENANCE_MODE       = false;
 let   KHPAY_API_KEY          = "ak_5de3149200e549b740b513233fa2a90930f8d2efadabcd92";
 let   DROPMAIL_TOKEN         = "";
 const KHPAY_BASE             = "https://www.khpay.site/api/v1";
-const PAYMENT_TIMEOUT_SEC    = 175;
+const PAYMENT_TIMEOUT_SEC    = 60;
 const PAYMENT_POLL_INTERVAL  = 5;
 
 // ── 2. DB file ────────────────────────────────────────────────────────────────
