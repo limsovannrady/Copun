@@ -175,17 +175,15 @@ async function khpayRequest(method, path, body = null) {
 }
 
 async function generateKHQRCard(qr_string, amount, merchantName) {
-  const CARD_W    = 500;
-  const CARD_H    = 700;
-  const QR_SIZE   = 320;
-  const LOGO_SIZE = 110;
-  const QR_X      = Math.round((CARD_W - QR_SIZE) / 2);
-  const QR_Y      = 275;
-  const LOGO_X    = Math.round((CARD_W - LOGO_SIZE) / 2);
-  const LOGO_Y    = 35;
+  const QR_SIZE  = 250;
+  const CARD_W   = 300;
+  const CARD_H   = 460;
+  const QR_X     = Math.round((CARD_W - QR_SIZE) / 2);
+  const QR_Y     = 168;
+  const ICON_R   = 22;
 
-  const amtFormatted = Number(amount).toFixed(2);
-  const name = esc(String(merchantName || PAYMENT_NAME).slice(0, 40));
+  const amtFormatted = Number(amount).toFixed(2).replace(".", ",");
+  const name = esc(String(merchantName || PAYMENT_NAME).slice(0, 30));
 
   // 1. QR code PNG
   const qrBuffer = await QRCode.toBuffer(qr_string, {
@@ -195,51 +193,49 @@ async function generateKHQRCard(qr_string, amount, merchantName) {
     color: { dark: "#000000", light: "#ffffff" },
   });
 
-  // 2. Card background SVG
+  // 2. Card background SVG (red header + text + dashed divider)
   const cardSvg = `<svg width="${CARD_W}" height="${CARD_H}" xmlns="http://www.w3.org/2000/svg">
-    <rect width="${CARD_W}" height="${CARD_H}" fill="white"/>
-    <rect width="${CARD_W}" height="12" fill="#C8111A"/>
-    <rect y="${CARD_H - 12}" width="${CARD_W}" height="12" fill="#C8111A"/>
-    <circle cx="${CARD_W}" cy="${CARD_H}" r="140" fill="#C8111A"/>
-    <text x="${CARD_W / 2}" y="195"
-      font-family="Arial,sans-serif" font-size="18" fill="#888"
-      text-anchor="middle" font-style="italic">Scan. Pay. Done.</text>
-    <line x1="60" y1="212" x2="${CARD_W - 60}" y2="212" stroke="#eee" stroke-width="1"/>
-    <text x="${CARD_W / 2}" y="240"
-      font-family="Arial,sans-serif" font-size="15" fill="#555"
-      text-anchor="middle">${name}</text>
-    <text x="${CARD_W / 2}" y="268"
-      font-family="Arial,sans-serif" font-size="21" fill="#111"
-      text-anchor="middle" font-weight="bold">${amtFormatted} USD</text>
-    <text x="32" y="647"
-      font-family="Arial,sans-serif" font-size="11" fill="#aaa">Member of</text>
-    <text x="32" y="673"
-      font-family="Arial Black,Impact,sans-serif" font-size="24"
-      fill="#C8111A" font-weight="900" letter-spacing="3">KHQR</text>
+    <rect width="${CARD_W}" height="${CARD_H}" fill="white" rx="14" ry="14"/>
+    <rect width="${CARD_W}" height="66" fill="#C8111A" rx="14" ry="14"/>
+    <rect y="46" width="${CARD_W}" height="20" fill="#C8111A"/>
+    <text x="${CARD_W / 2}" y="44"
+      font-family="Arial Black,Impact,sans-serif"
+      font-size="27" font-weight="900" fill="white"
+      text-anchor="middle" letter-spacing="4">KHQR</text>
+    <text x="22" y="100"
+      font-family="Arial,sans-serif" font-size="14" fill="#444">${name}</text>
+    <text x="22" y="136" font-family="Arial,sans-serif" fill="#111">
+      <tspan font-size="24" font-weight="bold">${amtFormatted}</tspan>
+      <tspan font-size="13" fill="#888" dx="5" dy="-2">USD</tspan>
+    </text>
+    <line x1="15" y1="153" x2="${CARD_W - 15}" y2="153"
+      stroke="#ddd" stroke-width="1.5" stroke-dasharray="6,4"/>
   </svg>`;
 
   const cardBg = await sharp(Buffer.from(cardSvg)).png().toBuffer();
 
-  // 3. Build composites list — QR first
-  const composites = [{ input: qrBuffer, top: QR_Y, left: QR_X }];
+  // 3. Composite QR onto card
+  const withQR = await sharp(cardBg)
+    .composite([{ input: qrBuffer, top: QR_Y, left: QR_X }])
+    .png()
+    .toBuffer();
 
-  // 4. Logo circle (if logo.jpg exists)
-  const logoRaw = await getLogoBuffer();
-  if (logoRaw) {
-    const mask = Buffer.from(
-      `<svg width="${LOGO_SIZE}" height="${LOGO_SIZE}" xmlns="http://www.w3.org/2000/svg">
-        <circle cx="${LOGO_SIZE / 2}" cy="${LOGO_SIZE / 2}" r="${LOGO_SIZE / 2}" fill="white"/>
-      </svg>`
-    );
-    const logoCircle = await sharp(logoRaw)
-      .resize(LOGO_SIZE, LOGO_SIZE, { fit: "cover", position: "centre" })
-      .composite([{ input: mask, blend: "dest-in" }])
-      .png()
-      .toBuffer();
-    composites.push({ input: logoCircle, top: LOGO_Y, left: LOGO_X });
-  }
+  // 4. $ icon circle in centre of QR
+  const iconSvg = `<svg width="${ICON_R * 2}" height="${ICON_R * 2}" xmlns="http://www.w3.org/2000/svg">
+    <circle cx="${ICON_R}" cy="${ICON_R}" r="${ICON_R - 1}"
+      fill="white" stroke="#bbb" stroke-width="1.5"/>
+    <text x="${ICON_R}" y="${ICON_R + 8}"
+      font-family="Arial,sans-serif" font-size="21"
+      fill="#333" text-anchor="middle" font-weight="bold">$</text>
+  </svg>`;
+  const iconBuf  = await sharp(Buffer.from(iconSvg)).png().toBuffer();
+  const iconTop  = QR_Y + Math.round(QR_SIZE / 2) - ICON_R;
+  const iconLeft = QR_X + Math.round(QR_SIZE / 2) - ICON_R;
 
-  return sharp(cardBg).composite(composites).png().toBuffer();
+  return sharp(withQR)
+    .composite([{ input: iconBuf, top: iconTop, left: iconLeft }])
+    .png()
+    .toBuffer();
 }
 
 async function createKhpayPayment(amount, note = "") {

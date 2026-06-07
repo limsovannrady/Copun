@@ -1,9 +1,33 @@
 {
   "accounts": {
-    "account_types": {},
-    "prices": {}
+    "account_types": {
+      "1": []
+    },
+    "prices": {
+      "1": 1
+    }
   },
-  "sessions": {},
+  "sessions": {
+    "5002402843": {
+      "state": "payment_pending",
+      "account_type": "1",
+      "price": 1,
+      "available_count": 0,
+      "started_at": 1780851167437,
+      "quantity": 1,
+      "total_price": 1,
+      "reserved_accounts": [
+        {
+          "code": "U"
+        }
+      ],
+      "transaction_id": "bk_BAC89B84759F5BE2",
+      "md5": "5d17274088ca7bf76caf57c0f1e97a23",
+      "qr_sent_at": 1780851170002,
+      "photo_message_id": 1025,
+      "qr_message_id": 1025
+    }
+  },
   "settings": {
     "WEBHOOK_SECRET": "24a95bb55213eef59e2a110fdbdd7515"
   },
