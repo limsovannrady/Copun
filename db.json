@@ -30,24 +30,6 @@
   "sessions": {
     "7433145236": {
       "state": "admin_input:secret_remove"
-    },
-    "5002402843": {
-      "state": "payment_pending",
-      "account_type": "http://www.khpay.site",
-      "price": 0.01,
-      "available_count": 0,
-      "started_at": 1780830176587,
-      "quantity": 1,
-      "total_price": 0.01,
-      "reserved_accounts": [
-        {
-          "code": "1"
-        }
-      ],
-      "transaction_id": "txn_b0f9c1e8ce1c1832",
-      "qr_sent_at": 1780830180634,
-      "photo_message_id": 559,
-      "qr_message_id": 559
     }
   },
   "settings": {
@@ -55,7 +37,7 @@
     "TELEGRAM_CHANNEL_ID": "-1003756077815",
     "EXTRA_ADMIN_IDS": "[]",
     "DROPMAIL_TOKEN": "af_AQVqJFNtEb57OhqDSUSAq-URfd2Ii2mfMRuUdFrd",
-    "DROPMAIL_SESSIONS": "{\"5002402843\":{\"sessionId\":\"U2Vzc2lvbjpX-jdTt2xLwbkr-C9Rt4Tn\",\"address\":\"qojefkwvi@emltmp.com\",\"expiresAt\":\"2026-06-07T11:08:15+00:00\"}}"
+    "DROPMAIL_SESSIONS": "{\"5002402843\":{\"sessionId\":\"U2Vzc2lvbjoHTci7reVLGb-0ZZcQPHPK\",\"address\":\"alvxeldxt@10mail.org\",\"expiresAt\":\"2026-06-07T11:14:55+00:00\"}}"
   },
   "users": {
     "7433145236": {

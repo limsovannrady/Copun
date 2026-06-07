@@ -179,6 +179,10 @@ function getDropmailSession(uid) {
   } catch { return null; }
 }
 
+function getAllDropmailSessions() {
+  try { return JSON.parse(getSetting("DROPMAIL_SESSIONS") || "{}"); } catch { return {}; }
+}
+
 function setDropmailSession(uid, session) {
   let all = {};
   try { all = JSON.parse(getSetting("DROPMAIL_SESSIONS") || "{}"); } catch {}
@@ -937,15 +941,24 @@ async function dispatchAdminButton(ctx, chatId, uid, btn) {
         CANCEL_INPUT_KB);
 
     case BTN_EMAIL_MGMT: {
-      const dmSession = getDropmailSession(uid);
       const tokenStatus = DROPMAIL_TOKEN
         ? `✅ Token: <code>${esc(DROPMAIL_TOKEN.slice(0,8))}…</code>`
         : "❌ មិនទាន់មាន Token — ចុច 🔑 កំណត់ Token";
-      const emailStatus = dmSession
-        ? `📬 Email: <code>${esc(dmSession.address)}</code>\n⏱ ID: <code>${esc(dmSession.sessionId)}</code>`
-        : "📭 មិនទាន់មាន Email (ចុច 📨 Email ថ្មី)";
+      const allSessions = getAllDropmailSessions();
+      const entries = Object.entries(allSessions);
+      let emailList;
+      if (!entries.length) {
+        emailList = "📭 មិនទាន់មាន Email (ចុច 📨 Email ថ្មី)";
+      } else {
+        emailList = `📋 <b>Email Sessions (${entries.length}):</b>\n\n` +
+          entries.map(([sessUid, s], i) => {
+            const exp = s.expiresAt ? new Date(s.expiresAt).toISOString().slice(0,16).replace("T"," ") : "—";
+            const mine = String(sessUid) === String(uid) ? " 👤" : "";
+            return `${i + 1}. <code>${esc(s.address)}</code>${mine}\n    ⏱ ${esc(exp)} UTC`;
+          }).join("\n\n");
+      }
       return sendMsg(ctx, chatId,
-        `📧 <b>ការគ្រប់គ្រងអ៊ីម៉ែល (Dropmail)</b>\n\n${tokenStatus}\n\n${emailStatus}`,
+        `📧 <b>ការគ្រប់គ្រងអ៊ីម៉ែល (Dropmail)</b>\n\n${tokenStatus}\n\n${emailList}`,
         EMAIL_SUBMENU_KB);
     }
 
