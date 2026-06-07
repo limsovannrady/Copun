@@ -295,24 +295,41 @@ async function createKhpayPayment(amount, note = "") {
     if (!data.success) {
       return { imgBuffer: null, transaction_id: null, error: data.error || "API error" };
     }
-    const { transaction_id, qr: qr_string, expires_in } = data.data;
+    const { transaction_id, qr: qr_string, expires_in, md5 } = data.data;
 
     // Render QR from qr_string locally (reliable, no extra fetch)
     const imgBuffer = await QRCode.toBuffer(qr_string, { errorCorrectionLevel: "M", width: 400, margin: 2 });
-    return { imgBuffer, transaction_id, expires_in: expires_in ?? 180, error: null };
+    return { imgBuffer, transaction_id, md5: md5 ?? null, expires_in: expires_in ?? 180, error: null };
   } catch (e) {
     return { imgBuffer: null, transaction_id: null, error: e.message };
   }
 }
 
-async function checkKhpayStatus(transaction_id) {
+async function checkKhpayStatus(transaction_id, md5 = null) {
   try {
+    // Primary: GET /transactions/{id}
     const data = await khpayRequest("GET", `/transactions/${transaction_id}`);
-    if (!data.success) return { paid: false, status: "error", data: null };
-    const d = data.data;
-    const status = d.status ?? "";
-    const paid = status === "paid" || status === "success" || status === "completed" || !!d.paid_at;
-    return { paid, status, data: d };
+    if (data.success) {
+      const d = data.data;
+      const status = (d.status ?? "").toLowerCase();
+      if (status === "paid" || status === "success" || status === "completed" || !!d.paid_at) {
+        return { paid: true, status, data: d };
+      }
+    }
+
+    // Secondary: POST /bakong/check — confirms via NBC KHQR md5
+    if (md5) {
+      const bk = await khpayRequest("POST", "/bakong/check", { transaction_id, md5 });
+      if (bk.success && bk.data) {
+        const bkStatus = (bk.data.status ?? "").toLowerCase();
+        const bkPaid = bkStatus === "paid" || bkStatus === "success" || bkStatus === "completed"
+          || bk.data.transaction !== null && bk.data.transaction !== undefined;
+        if (bkPaid) return { paid: true, status: bkStatus, data: bk.data.transaction ?? bk.data };
+      }
+    }
+
+    const fallbackStatus = data.success ? (data.data?.status ?? "pending") : "error";
+    return { paid: false, status: fallbackStatus, data: data.data ?? null };
   } catch (e) {
     console.warn("[WARN] checkKhpayStatus:", e.message);
     return { paid: false, status: "error", data: null };
@@ -439,7 +456,7 @@ async function startPaymentForSession(ctx, chatId, userId, session, cbQuery = nu
   if (cbQuery) { try { await cbQuery.answerCbQuery("កំពុងបង្កើត QR..."); } catch {} }
   session.state = "payment_pending";
 
-  const { imgBuffer, transaction_id, error } = await createKhpayPayment(session.total_price, session.account_type);
+  const { imgBuffer, transaction_id, md5, error } = await createKhpayPayment(session.total_price, session.account_type);
 
   if (!imgBuffer || !transaction_id) {
     if (isAdmin(userId)) {
@@ -455,6 +472,7 @@ async function startPaymentForSession(ctx, chatId, userId, session, cbQuery = nu
   }
 
   session.transaction_id = transaction_id;
+  session.md5            = md5 ?? null;
   session.qr_sent_at     = Date.now();
 
   const photoMsg = await sendPhoto(ctx, chatId, imgBuffer, { ...CHECK_PAYMENT_INLINE });
@@ -511,7 +529,7 @@ async function runPaymentWatchdog() {
 
     // Check payment status
     try {
-      const { paid, data: payData } = await checkKhpayStatus(transaction_id);
+      const { paid, data: payData } = await checkKhpayStatus(transaction_id, sess.md5 ?? null);
       if (!paid) continue;
 
       // Mark as delivering (idempotency guard)

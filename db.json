@@ -3,9 +3,6 @@
     "account_types": {
       "I": [
         {
-          "code": "Iddhsi"
-        },
-        {
           "code": "Hsis@929.c"
         }
       ],
@@ -32,19 +29,19 @@
       "state": "payment_pending",
       "account_type": "I",
       "price": 0.01,
-      "available_count": 2,
-      "started_at": 1780830980843,
+      "available_count": 1,
+      "started_at": 1780831152274,
       "quantity": 1,
       "total_price": 0.01,
       "reserved_accounts": [
         {
-          "code": "Iehs8eehw"
+          "code": "Iddhsi"
         }
       ],
-      "transaction_id": "bk_08DF30AAF74BDB0E",
-      "qr_sent_at": 1780830983969,
-      "photo_message_id": 650,
-      "qr_message_id": 650
+      "transaction_id": "bk_1D477C841F7049E1",
+      "qr_sent_at": 1780831154718,
+      "photo_message_id": 664,
+      "qr_message_id": 664
     }
   },
   "settings": {
