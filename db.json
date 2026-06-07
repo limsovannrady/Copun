@@ -5,10 +5,28 @@
         {
           "code": "U"
         }
+      ],
+      "Y": [
+        {
+          "code": "DropMail.me:"
+        },
+        {
+          "code": "104213kt@spymail.one"
+        },
+        {
+          "code": "bixfocgksybv@dropmail.me"
+        },
+        {
+          "code": "09k39yev8c@spymail.one"
+        },
+        {
+          "code": "ajkpfcostuoqbp@dropmail.me"
+        }
       ]
     },
     "prices": {
-      "1": 1
+      "1": 1,
+      "Y": 0.01
     }
   },
   "sessions": {},
@@ -35,6 +53,30 @@
         }
       ],
       "purchased_at": "2026-06-07T17:15:57.804Z"
+    },
+    {
+      "user_id": 7433145236,
+      "account_type": "Y",
+      "quantity": 1,
+      "total_price": 0.01,
+      "accounts": [
+        {
+          "code": "DropMail.me:"
+        }
+      ],
+      "purchased_at": "2026-06-07T17:20:55.524Z"
+    },
+    {
+      "user_id": 7433145236,
+      "account_type": "Y",
+      "quantity": 1,
+      "total_price": 0.01,
+      "accounts": [
+        {
+          "code": "DropMail.me:"
+        }
+      ],
+      "purchased_at": "2026-06-07T17:20:57.862Z"
     }
   ]
 }

@@ -66,6 +66,12 @@ const savePurchases = saveDB;
 const getSetting = (k, def = null) => settings[k] ?? def;
 const setSetting = (k, v) => { settings[k] = v; saveDB(); };
 
+// ── Cambodia timezone helpers ─────────────────────────────────────────────────
+const KH_TZ     = "Asia/Phnom_Penh";
+const nowKH     = () => new Date().toLocaleString("sv-SE", { timeZone: KH_TZ }).replace("T", " ") + " +07";
+const nowKHFile = () => new Date().toLocaleString("sv-SE", { timeZone: KH_TZ }).replace(/[-: ]/g, "").slice(0, 14);
+const fmtKH     = (iso) => iso ? new Date(iso).toLocaleString("sv-SE", { timeZone: KH_TZ }).replace("T", " ") + " +07" : "—";
+
 // ── 5. Admin helpers ──────────────────────────────────────────────────────────
 const isAdmin = uid => Number(uid) === ADMIN_ID || EXTRA_ADMIN_IDS.has(Number(uid));
 
@@ -568,7 +574,7 @@ async function deliverAccounts(ctx, chatId, userId, session, paymentData = null)
   // Admin notification
   try {
     const pd  = paymentData || {};
-    const now = new Date().toLocaleString("en-GB", { timeZone: "Asia/Phnom_Penh", hour12: false });
+    const now = nowKH();
     const fromAcc = pd.fromAccountId || pd.hash || "N/A";
     const memo    = pd.memo || "គ្មាន";
     const ref     = pd.externalRef || pd.transactionId || pd.md5 || "N/A";
@@ -1167,7 +1173,7 @@ async function exportStock(ctx, chatId) {
   }
 
   const totalAvail = names.reduce((s, t) => s + (types[t] || []).length, 0);
-  const now_str = new Date().toISOString().slice(0, 19) + " UTC";
+  const now_str = nowKH();
   const W = 60;
   const lines = [
     "=".repeat(W),
@@ -1194,7 +1200,7 @@ async function exportStock(ctx, chatId) {
 
   const content = lines.join("\n");
   const buf = Buffer.from(content, "utf8");
-  const filename = `stock_${new Date().toISOString().slice(0,10)}.txt`;
+  const filename = `stock_${nowKHFile()}.txt`;
 
   await ctx.telegram.sendDocument(chatId, { source: buf, filename }, {
     caption: `📦 <b>ស្តុក គូប៉ុង</b> — ${names.length} ប្រភេទ, ${totalAvail} នៅសល់`,
@@ -1218,7 +1224,7 @@ async function exportBuyers(ctx, chatId) {
     grouped[uid].purchases.push(p);
   }
   const W = 60;
-  const now_str = new Date().toISOString().slice(0,19) + " UTC";
+  const now_str = nowKH();
   const lines = [
     "=".repeat(W),
     "  BUYERS REPORT".padStart((W + 14) / 2).padEnd(W),
@@ -1233,7 +1239,7 @@ async function exportBuyers(ctx, chatId) {
       `  ID       : ${uid}`, `  Name     : ${fn}`, `  Username : ${un}`,
       `  Purchases: ${info.purchases.length}`, "─".repeat(W));
     info.purchases.forEach((p, i) => {
-      const when = (p.purchased_at || "").slice(0, 19);
+      const when = fmtKH(p.purchased_at);
       lines.push(`  [${i+1}] ${p.account_type}`, `      Qty   : ${p.quantity}`,
         `      Price : $${p.total_price}`, `      Date  : ${when}`, "      Accounts:");
       (p.accounts || []).forEach(a => lines.push(`        • ${formatAccount(a)}`));
@@ -1242,7 +1248,7 @@ async function exportBuyers(ctx, chatId) {
   }
   lines.push("", "=".repeat(W), "=".repeat(W));
 
-  const now_ts = new Date().toISOString().replace(/[:.]/g,"").slice(0,15);
+  const now_ts = nowKHFile();
   const buf    = Buffer.from(lines.join("\n"), "utf8");
   await sendDocument(ctx, chatId, buf, `buyers_${now_ts}.txt`,
     `📋 របាយការណ៍ទិញ — ${Object.keys(grouped).length} អ្នក​ទិញ`);
@@ -1260,7 +1266,7 @@ async function showUsersList(ctx, chatId) {
     const uname = info.username ? `@${info.username}` : "—";
     lines.push(`${full}`, `   🔖 ${uname}`, `   🪪 ${uid}`, "");
   }
-  const now_ts = new Date().toISOString().replace(/[:.]/g,"").slice(0,15);
+  const now_ts = nowKHFile();
   const buf    = Buffer.from(lines.join("\n"), "utf8");
   await sendDocument(ctx, chatId, buf, `users_${now_ts}.txt`,
     `👥 បញ្ជីអ្នកប្រើប្រាស់ — ${rows.length} នាក់`);
