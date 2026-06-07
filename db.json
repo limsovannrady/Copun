@@ -39,7 +39,7 @@
   "settings": {
     "MAINTENANCE_MODE": false,
     "TELEGRAM_CHANNEL_ID": "-1003756077815",
-    "EXTRA_ADMIN_IDS": "[7433145236,50024028743]",
+    "EXTRA_ADMIN_IDS": "[]",
     "DROPMAIL_TOKEN": "af_AQVqJFNtEb57OhqDSUSAq-URfd2Ii2mfMRuUdFrd",
     "DROPMAIL_SESSIONS": "{\"5002402843\":{\"sessionId\":\"U2Vzc2lvbjpX-jdTt2xLwbkr-C9Rt4Tn\",\"address\":\"qojefkwvi@emltmp.com\",\"expiresAt\":\"2026-06-07T11:08:15+00:00\"}}"
   },

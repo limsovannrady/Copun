@@ -1271,7 +1271,60 @@ async function sendKhpayInfo(ctx, chatId) {
   }
 }
 
-// ── 25. Startup ───────────────────────────────────────────────────────────────
+// ── 25. Recovery of pending sessions after restart ────────────────────────────
+async function recoverPendingSessions() {
+  const pending = Object.entries(user_sessions).filter(([, s]) => s.state === "payment_pending");
+  if (!pending.length) return;
+  console.log(`[INFO] Recovering ${pending.length} pending payment session(s) after restart...`);
+
+  const fakeCtx = { telegram: bot.telegram };
+
+  for (const [uidStr, sess] of pending) {
+    const uid = Number(uidStr);
+    const { transaction_id, qr_sent_at, account_type, reserved_accounts = [] } = sess;
+
+    try {
+      // Check if already paid
+      const { paid, data: payData } = await checkKhpayStatus(transaction_id);
+      if (paid) {
+        console.log(`[INFO] Recovery: session ${uid} already paid — delivering`);
+        await deliverAccounts(fakeCtx, uid, uid, sess, payData);
+        continue;
+      }
+
+      const elapsed   = Date.now() - (qr_sent_at || 0);
+      const remaining = PAYMENT_TIMEOUT_SEC * 1000 - elapsed;
+
+      if (remaining > 5000) {
+        // Still within window — notify user and restart polling
+        console.log(`[INFO] Recovery: restarting poll for ${uid}, ${Math.round(remaining / 1000)}s left`);
+        await sendMsg(fakeCtx, uid,
+          "⚠️ <b>Bot បានចាប់ផ្ដើមឡើងវិញ!</b>\n\nQR Code របស់អ្នកនៅតែដំណើរការ។ សូមមើលរូប QR ចាស់ ឬរង់ចាំ…"
+        ).catch(() => {});
+        scheduleQRExpiry(fakeCtx, uid, uid, transaction_id, qr_sent_at);
+      } else {
+        // Expired — return stock and notify
+        console.log(`[INFO] Recovery: session ${uid} expired — returning stock`);
+        if (reserved_accounts.length && account_type) {
+          accounts_data.account_types[account_type] = [
+            ...reserved_accounts,
+            ...(accounts_data.account_types[account_type] ?? []),
+          ];
+          saveAccounts();
+        }
+        delete user_sessions[uid];
+        saveSessions();
+        await sendMsg(fakeCtx, uid,
+          "⌛ <b>QR Code បានផុតកំណត់</b>\n\nសូមបង្កើតការទិញម្ដងទៀត។"
+        ).catch(() => {});
+      }
+    } catch (e) {
+      console.warn(`[WARN] Recovery failed for uid ${uid}:`, e.message);
+    }
+  }
+}
+
+// ── 26. Startup ───────────────────────────────────────────────────────────────
 function loadAll() {
   const db       = readDB();
   settings       = db.settings   ?? {};
@@ -1301,4 +1354,5 @@ bot.launch().then(async () => {
   const me = await bot.telegram.getMe();
   console.log(`[INFO] Bot ready: @${me.username}`);
   try { await bot.telegram.sendMessage(ADMIN_ID, "✅ <b>Bot ចាប់ផ្ដើម! (JavaScript — 100% GitHub structure)</b>", { parse_mode: "HTML" }); } catch {}
+  await recoverPendingSessions();
 });
