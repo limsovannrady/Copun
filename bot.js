@@ -278,8 +278,24 @@ async function createKhpayPayment(amount, note = "") {
     if (!data.success) {
       return { imgBuffer: null, transaction_id: null, error: data.error || "API error" };
     }
-    const { transaction_id, qr: qr_string, expires_in, md5 } = data.data;
-    const imgBuffer = await generateKHQRCard(qr_string, amount, note || PAYMENT_NAME);
+    console.log("[KhPay] generate response keys:", Object.keys(data.data || {}));
+    console.log("[KhPay] generate data:", JSON.stringify(data.data));
+    const d = data.data;
+    const { transaction_id, expires_in, md5 } = d;
+    const qr_string = d.qr || d.qr_string || d.qr_code || "";
+
+    // Use image from API if available, otherwise generate our own card
+    let imgBuffer;
+    const imgUrl   = d.image_url || d.qr_image_url || d.image || d.qr_image || null;
+    const imgB64   = d.image_base64 || d.qr_base64 || null;
+    if (imgUrl) {
+      const r = await fetch(imgUrl, { signal: AbortSignal.timeout(10000) });
+      imgBuffer = Buffer.from(await r.arrayBuffer());
+    } else if (imgB64) {
+      imgBuffer = Buffer.from(imgB64, "base64");
+    } else {
+      imgBuffer = await generateKHQRCard(qr_string, amount, note || PAYMENT_NAME);
+    }
     return { imgBuffer, transaction_id, md5: md5 ?? null, expires_in: expires_in ?? 180, error: null };
   } catch (e) {
     return { imgBuffer: null, transaction_id: null, error: e.message };
