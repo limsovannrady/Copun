@@ -1258,23 +1258,40 @@ async function exportStock(ctx, chatId) {
   }
 
   const totalAvail = names.reduce((s, t) => s + (types[t] || []).length, 0);
-  await sendMsg(ctx, chatId, `📦 <b>ស្តុក គូប៉ុង</b> — ${names.length} ប្រភេទ, ${totalAvail} នៅសល់`);
+  const now_str = new Date().toISOString().slice(0, 19) + " UTC";
+  const W = 60;
+  const lines = [
+    "=".repeat(W),
+    "  ស្តុក គូប៉ុង / COUPON STOCK".padEnd(W),
+    `  ${now_str}`.padEnd(W),
+    `  ប្រភេទ: ${names.length}  |  សរុប: ${totalAvail} គូប៉ុង`.padEnd(W),
+    "=".repeat(W),
+    "",
+  ];
 
   for (const t of names) {
     const pool  = types[t] || [];
     const price = prices[t] ?? 0;
-    const lines = pool.map(acc => `• ${esc(formatAccount(acc))}`);
-    let block = `<b>${esc(t)}</b>  💰 $${price}  📦 ${pool.length}\n` +
-                (lines.length ? lines.join("\n") : "<i>(គ្មាន)</i>");
-    // Split if too long
-    const MAX = 4000;
-    while (block.length > MAX) {
-      const cut = block.lastIndexOf("\n", MAX);
-      await sendMsg(ctx, chatId, block.slice(0, cut === -1 ? MAX : cut));
-      block = block.slice(cut === -1 ? MAX : cut + 1);
+    lines.push(`[ ${t} ]  💰 $${price}  📦 ${pool.length} គូប៉ុង`);
+    lines.push("─".repeat(W));
+    if (pool.length) {
+      pool.forEach((acc, i) => lines.push(`  ${i + 1}. ${formatAccount(acc)}`));
+    } else {
+      lines.push("  (គ្មានក្នុងស្តុក)");
     }
-    if (block) await sendMsg(ctx, chatId, block);
+    lines.push("");
   }
+  lines.push("=".repeat(W));
+
+  const content = lines.join("\n");
+  const buf = Buffer.from(content, "utf8");
+  const filename = `stock_${new Date().toISOString().slice(0,10)}.txt`;
+
+  await ctx.telegram.sendDocument(chatId, { source: buf, filename }, {
+    caption: `📦 <b>ស្តុក គូប៉ុង</b> — ${names.length} ប្រភេទ, ${totalAvail} នៅសល់`,
+    parse_mode: "HTML",
+  });
+
   return sendAdminSettingsMenu(ctx, chatId);
 }
 

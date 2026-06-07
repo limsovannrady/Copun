@@ -1,7 +1,11 @@
 {
   "accounts": {
     "account_types": {
-      "1": []
+      "1": [
+        {
+          "code": "U"
+        }
+      ]
     },
     "prices": {
       "1": 1
@@ -9,21 +13,23 @@
   },
   "sessions": {
     "5002402843": {
-      "state": "waiting_for_quantity",
+      "state": "payment_pending",
       "account_type": "1",
       "price": 1,
       "available_count": 0,
-      "started_at": 1780851835479,
-      "quantity": 2,
-      "total_price": 2,
+      "started_at": 1780852380676,
+      "quantity": 1,
+      "total_price": 1,
       "reserved_accounts": [
         {
           "code": "U"
-        },
-        {
-          "code": "U"
         }
-      ]
+      ],
+      "transaction_id": "bk_2ED1FEAFED8E8EDE",
+      "md5": "98e6107fad921ce32d1fc53792faf298",
+      "qr_sent_at": 1780852383879,
+      "photo_message_id": 1195,
+      "qr_message_id": 1195
     }
   },
   "settings": {
