@@ -209,7 +209,7 @@ async function khpayRequest(method, path, body = null) {
 
 async function createKhpayPayment(amount, note = "") {
   try {
-    const data = await khpayRequest("POST", "/qr/generate", { amount, note: note || PAYMENT_NAME });
+    const data = await khpayRequest("POST", "/qr/generate", { amount, note: note || PAYMENT_NAME, payment_method: "bakong" });
     if (!data.success) {
       return { imgBuffer: null, transaction_id: null, error: data.error || "API error" };
     }
