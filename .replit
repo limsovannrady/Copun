@@ -25,12 +25,11 @@ name = "Telegram Bot"
 author = "agent"
 
 [workflows.workflow.metadata]
-outputType = "webview"
+outputType = "console"
 
 [[workflows.workflow.tasks]]
 task = "shell.exec"
 args = "node bot.js"
-waitForPort = 5000
 
 [agent]
 stack = "BEST_EFFORT_FALLBACK"
