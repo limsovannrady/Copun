@@ -18,7 +18,7 @@ let   CHANNEL_ID             = "";
 let   PAYMENT_NAME           = "RADY";
 let   MAINTENANCE_MODE       = false;
 let   KHPAY_API_KEY          = "ak_5de3149200e549b740b513233fa2a90930f8d2efadabcd92";
-let   DROPMAIL_TOKEN         = "";
+
 const KHPAY_BASE             = "https://www.khpay.site/api/v1";
 const PAYMENT_TIMEOUT_SEC    = 60;
 const PAYMENT_POLL_INTERVAL  = 5;
@@ -84,11 +84,7 @@ const BTN_DELETE_CONFIRM    = "✅ បញ្ជាក់លុប";
 const BTN_DELETE_CANCEL     = "🚫 បោះបង់ការលុប";
 const BTN_BROADCAST_CONFIRM = "✅ បញ្ជាក់ផ្សាយ";
 const BTN_BROADCAST_CANCEL  = "🚫 បោះបង់ការផ្សាយ";
-const BTN_EMAIL_MGMT        = "📧 អ៊ីម៉ែល";
-const BTN_EMAIL_NEW         = "📨 Email ថ្មី";
-const BTN_EMAIL_LIST        = "📋 បញ្ជី Email";
-const BTN_EMAIL_SET_TOKEN   = "🔑 កំណត់ Token";
-const BTN_EMAIL_CLEAR       = "🗑 លុប Email";
+
 const ADMIN_SETTINGS_BTN    = "⚙️កំណត់";
 
 const ADMIN_BUTTON_LABELS = new Set([
@@ -98,7 +94,7 @@ const ADMIN_BUTTON_LABELS = new Set([
   BTN_CHANNEL_EDIT, BTN_CHANNEL_CLEAR, BTN_ADMIN_ADD, BTN_ADMIN_REMOVE,
   BTN_MAINT_ON, BTN_MAINT_OFF, BTN_CANCEL_INPUT,
   BTN_DELETE_CONFIRM, BTN_DELETE_CANCEL, BTN_BROADCAST_CONFIRM, BTN_BROADCAST_CANCEL,
-  BTN_EMAIL_MGMT, BTN_EMAIL_NEW, BTN_EMAIL_LIST, BTN_EMAIL_SET_TOKEN, BTN_EMAIL_CLEAR,
+
   ADMIN_SETTINGS_BTN,
 ]);
 
@@ -110,7 +106,7 @@ const ADMIN_KB = Markup.keyboard([[ADMIN_SETTINGS_BTN]]).resize().persistent();
 const ADMIN_SETTINGS_KB = Markup.keyboard([
   [BTN_ADD_ACCOUNT, BTN_DELETE_TYPE],
   [BTN_STOCK,       BTN_BUYERS],
-  [BTN_USERS,       BTN_EMAIL_MGMT],
+  [BTN_USERS],
   [BTN_KHPAY,       BTN_CHANNEL],
   [BTN_ADMINS,      BTN_BROADCAST],
   [BTN_MAINTENANCE],
@@ -140,11 +136,6 @@ const BROADCAST_CONFIRM_KB = Markup.keyboard([
   [BTN_BROADCAST_CONFIRM], [BTN_BROADCAST_CANCEL],
 ]).resize().persistent();
 
-const EMAIL_SUBMENU_KB = Markup.keyboard([
-  [BTN_EMAIL_NEW, BTN_EMAIL_LIST],
-  [BTN_EMAIL_SET_TOKEN, BTN_EMAIL_CLEAR],
-  [BTN_BACK_SETTINGS],
-]).resize().persistent();
 
 const CHECK_PAYMENT_INLINE = Markup.inlineKeyboard([
   [Markup.button.callback("🚫 បោះបង់", "cancel_purchase")],
@@ -152,130 +143,6 @@ const CHECK_PAYMENT_INLINE = Markup.inlineKeyboard([
 
 const mainKb = uid => isAdmin(uid) ? ADMIN_KB : Markup.removeKeyboard();
 
-// ── 8a. Dropmail API helpers ──────────────────────────────────────────────────
-async function dropmailGql(query) {
-  if (!DROPMAIL_TOKEN) throw new Error("no_token");
-  const res = await fetch(`https://dropmail.me/api/graphql/${DROPMAIL_TOKEN}`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ query }),
-    signal: AbortSignal.timeout(12000),
-  });
-  return res.json();
-}
-
-async function dropmailCreateSession() {
-  const data = await dropmailGql(`mutation { introduceSession { id expiresAt addresses { address } } }`);
-  return data?.data?.introduceSession ?? null;
-}
-
-async function dropmailGetSession(sessionId) {
-  const data = await dropmailGql(
-    `{ session(id: "${sessionId}") { expiresAt addresses { address } mails { fromAddr headerSubject text downloadUrl } } }`
-  );
-  return data?.data?.session ?? null;
-}
-
-function getDropmailSession(uid) {
-  try {
-    const stored = getSetting("DROPMAIL_SESSIONS");
-    if (!stored) return null;
-    return JSON.parse(stored)[String(uid)] ?? null;
-  } catch { return null; }
-}
-
-function getAllDropmailSessions() {
-  try { return JSON.parse(getSetting("DROPMAIL_SESSIONS") || "{}"); } catch { return {}; }
-}
-
-function setDropmailSession(uid, session) {
-  let all = {};
-  try { all = JSON.parse(getSetting("DROPMAIL_SESSIONS") || "{}"); } catch {}
-  if (session) all[String(uid)] = session;
-  else delete all[String(uid)];
-  setSetting("DROPMAIL_SESSIONS", JSON.stringify(all));
-}
-
-// ── 8b. Email live polling ────────────────────────────────────────────────────
-const EMAIL_POLL_INTERVAL_SEC = 30;
-let _emailPollTimer   = null;
-let _seenMailHashes   = new Set();
-
-function mailHash(m) {
-  return crypto.createHash("md5")
-    .update(`${m.fromAddr||""}|${m.headerSubject||""}|${(m.text||"").slice(0,120)}`)
-    .digest("hex");
-}
-
-function loadSeenHashes() {
-  try {
-    const raw = getSetting("DROPMAIL_SEEN");
-    if (raw) _seenMailHashes = new Set(JSON.parse(raw));
-  } catch {}
-}
-
-function saveSeenHashes() {
-  setSetting("DROPMAIL_SEEN", JSON.stringify([..._seenMailHashes]));
-}
-
-async function pollEmailSessions() {
-  if (!DROPMAIL_TOKEN) return;
-  const channelTarget = CHANNEL_ID || null;
-  if (!channelTarget) return;
-
-  const all = getAllDropmailSessions();
-  const entries = Object.entries(all);
-  if (!entries.length) return;
-
-  const fakeCtx = { telegram: bot.telegram };
-  let anyNew = false;
-
-  for (const [uid, sess] of entries) {
-    try {
-      const session = await dropmailGetSession(sess.sessionId);
-      if (!session) {
-        // Session expired — clean up
-        setDropmailSession(uid, null);
-        console.log(`[Email] Session for uid ${uid} expired, removed.`);
-        continue;
-      }
-
-      const mails = session.mails || [];
-      for (const m of mails) {
-        const h = mailHash(m);
-        if (_seenMailHashes.has(h)) continue;
-        _seenMailHashes.add(h);
-        anyNew = true;
-
-        const subject = m.headerSubject || "(គ្មាន subject)";
-        const from    = m.fromAddr || "—";
-        const body    = (m.text || "").slice(0, 800) || "(គ្មានខ្លឹមសារ)";
-        const msg =
-          `📬 <b>អ៊ីម៉ែលថ្មីចូលមកដល់!</b>\n\n` +
-          `📧 <b>ទៅ:</b> <code>${esc(sess.address)}</code>\n` +
-          `👤 <b>ពី:</b> <code>${esc(from)}</code>\n` +
-          `📝 <b>ប្រធានបទ:</b> ${esc(subject)}\n\n` +
-          `────────────────────────────\n` +
-          `${esc(body)}${(m.text || "").length > 800 ? "\n<i>…(truncated)</i>" : ""}`;
-
-        await sendMsg(fakeCtx, channelTarget, msg).catch(() => {});
-        console.log(`[Email] New mail forwarded to channel: ${from} → ${sess.address}`);
-      }
-    } catch (e) {
-      console.warn(`[Email] Poll error for uid ${uid}:`, e.message);
-    }
-  }
-
-  if (anyNew) saveSeenHashes();
-}
-
-function startEmailLivePolling() {
-  if (_emailPollTimer) clearInterval(_emailPollTimer);
-  _emailPollTimer = setInterval(async () => {
-    try { await pollEmailSessions(); } catch (e) { console.warn("[Email] Poll cycle error:", e.message); }
-  }, EMAIL_POLL_INTERVAL_SEC * 1000);
-  console.log(`[Email] Live polling started (every ${EMAIL_POLL_INTERVAL_SEC}s)`);
-}
 
 // ── 8. KhPay API helpers ──────────────────────────────────────────────────────
 async function khpayRequest(method, path, body = null) {
@@ -1130,135 +997,6 @@ async function dispatchAdminButton(ctx, chatId, uid, btn) {
         "📢 សូមផ្ញើ​សារ​ដែល​ចង់​ផ្សាយ​ទៅ​អ្នក​ប្រើ​ប្រាស់​ទាំង​អស់៖\n\n<i>ចុច 🚫 បោះបង់ ដើម្បីបោះបង់</i>",
         CANCEL_INPUT_KB);
 
-    case BTN_EMAIL_MGMT: {
-      const tokenStatus = DROPMAIL_TOKEN
-        ? `✅ Token: <code>${esc(DROPMAIL_TOKEN.slice(0,8))}…</code>`
-        : "❌ មិនទាន់មាន Token — ចុច 🔑 កំណត់ Token";
-      const allSessions = getAllDropmailSessions();
-      const entries = Object.entries(allSessions);
-      let emailList;
-      if (!entries.length) {
-        emailList = "📭 មិនទាន់មាន Email (ចុច 📨 Email ថ្មី)";
-      } else {
-        emailList = `📋 <b>Email Sessions (${entries.length}):</b>\n\n` +
-          entries.map(([sessUid, s], i) => {
-            const exp = s.expiresAt ? new Date(s.expiresAt).toISOString().slice(0,16).replace("T"," ") : "—";
-            const mine = String(sessUid) === String(uid) ? " 👤" : "";
-            return `${i + 1}. <code>${esc(s.address)}</code>${mine}\n    ⏱ ${esc(exp)} UTC`;
-          }).join("\n\n");
-      }
-      return sendMsg(ctx, chatId,
-        `📧 <b>ការគ្រប់គ្រងអ៊ីម៉ែល (Dropmail)</b>\n\n${tokenStatus}\n\n${emailList}`,
-        EMAIL_SUBMENU_KB);
-    }
-
-    case BTN_EMAIL_SET_TOKEN:
-      user_sessions[uid] = { state: "admin_input:email_token" }; saveSessions();
-      return sendMsg(ctx, chatId,
-        "🔑 សូមផ្ញើ <b>Dropmail API Token</b> របស់អ្នក:\n\n<i>ទទួល token ពី <a href=\"https://dropmail.me\">dropmail.me</a> (GraphQL API Token)</i>\n\n<i>ចុច 🚫 បោះបង់ ដើម្បីបោះបង់</i>",
-        CANCEL_INPUT_KB);
-
-    case BTN_EMAIL_NEW: {
-      if (!DROPMAIL_TOKEN) {
-        return sendMsg(ctx, chatId,
-          "❌ មិនទាន់មាន Dropmail Token! សូមចុច 🔑 កំណត់ Token ជាមុនសិន។",
-          EMAIL_SUBMENU_KB);
-      }
-      try {
-        await sendMsg(ctx, chatId, "⏳ កំពុងបង្កើត Email ថ្មី…", EMAIL_SUBMENU_KB);
-        const session = await dropmailCreateSession();
-        if (!session || !session.addresses?.length) {
-          return sendMsg(ctx, chatId, "❌ មិនអាចបង្កើត Email បានទេ។ Token ប្រហែលមិនត្រឹមត្រូវ។", EMAIL_SUBMENU_KB);
-        }
-        const address = session.addresses[0].address;
-        const expires = session.expiresAt ? new Date(session.expiresAt).toISOString().slice(0,19) + " UTC" : "—";
-        setDropmailSession(uid, { sessionId: session.id, address, expiresAt: session.expiresAt });
-        startEmailLivePolling();
-        return sendMsg(ctx, chatId,
-          `✅ <b>Email ថ្មីបានបង្កើត!</b>\n\n` +
-          `📧 <b>Address:</b> <code>${esc(address)}</code>\n` +
-          `🆔 <b>Session ID:</b> <code>${esc(session.id)}</code>\n` +
-          `⏱ <b>Expires:</b> ${esc(expires)}\n\n` +
-          `<i>ចុច 📥 Inbox ដើម្បីមើលអ៊ីម៉ែលដែលទទួល</i>`,
-          EMAIL_SUBMENU_KB);
-      } catch (e) {
-        return sendMsg(ctx, chatId, `❌ Error: <code>${esc(e.message)}</code>`, EMAIL_SUBMENU_KB);
-      }
-    }
-
-    case BTN_EMAIL_INBOX: {
-      const sess = getDropmailSession(uid);
-      if (!sess) {
-        return sendMsg(ctx, chatId,
-          "❌ មិនទាន់មាន Email! ចុច 📨 Email ថ្មី ដើម្បីបង្កើតមួយ។",
-          EMAIL_SUBMENU_KB);
-      }
-      if (!DROPMAIL_TOKEN) {
-        return sendMsg(ctx, chatId,
-          "❌ មិនទាន់មាន Dropmail Token! សូមចុច 🔑 កំណត់ Token ជាមុនសិន។",
-          EMAIL_SUBMENU_KB);
-      }
-      try {
-        await sendMsg(ctx, chatId, `⏳ កំពុងពិនិត្យ Inbox <code>${esc(sess.address)}</code>…`, EMAIL_SUBMENU_KB);
-        const session = await dropmailGetSession(sess.sessionId);
-        if (!session) {
-          setDropmailSession(uid, null);
-          return sendMsg(ctx, chatId,
-            "❌ Session ផុតកំណត់ ឬ Token មិនត្រឹមត្រូវ។ សូមបង្កើត Email ថ្មី។",
-            EMAIL_SUBMENU_KB);
-        }
-        const mails = session.mails || [];
-        const expires = session.expiresAt ? new Date(session.expiresAt).toISOString().slice(0,19) + " UTC" : "—";
-        if (!mails.length) {
-          return sendMsg(ctx, chatId,
-            `📭 <b>Inbox ទទេ</b>\n\n📧 <code>${esc(sess.address)}</code>\n⏱ Expires: ${esc(expires)}\n\n<i>រង់ចាំអ៊ីម៉ែលចូល…</i>`,
-            EMAIL_SUBMENU_KB);
-        }
-        const header = `📥 <b>Inbox</b> — ${mails.length} អ៊ីម៉ែល\n📧 <code>${esc(sess.address)}</code>\n━━━━━━━━━━━━━━━━━━━\n`;
-        const targets = [chatId];
-        if (CHANNEL_ID && String(CHANNEL_ID) !== String(chatId)) targets.push(CHANNEL_ID);
-        for (const target of targets) await sendMsg(ctx, target, header, EMAIL_SUBMENU_KB).catch(() => {});
-        for (let i = 0; i < mails.length; i++) {
-          const m = mails[i];
-          const subject = m.headerSubject || "(គ្មាន subject)";
-          const from    = m.fromAddr || "—";
-          const body    = (m.text || "").slice(0, 500) || "(គ្មានខ្លឹមសារ)";
-          const mailMsg =
-            `📨 <b>អ៊ីម៉ែល #${i + 1}</b>\n` +
-            `👤 <b>From:</b> <code>${esc(from)}</code>\n` +
-            `📌 <b>Subject:</b> ${esc(subject)}\n` +
-            `━━━━━━━━━━━━━━━━━━━\n` +
-            `${esc(body)}${(m.text || "").length > 500 ? "\n<i>…(truncated)</i>" : ""}`;
-          for (const target of targets) await sendMsg(ctx, target, mailMsg).catch(() => {});
-        }
-        return;
-      } catch (e) {
-        return sendMsg(ctx, chatId, `❌ Error: <code>${esc(e.message)}</code>`, EMAIL_SUBMENU_KB);
-      }
-    }
-
-    case BTN_EMAIL_LIST: {
-      const allSessions = getAllDropmailSessions();
-      const entries = Object.entries(allSessions);
-      if (!entries.length) {
-        return sendMsg(ctx, chatId, "📭 <b>មិនទាន់មាន Email session ណាមួយទេ។</b>\n\nចុច 📨 Email ថ្មី ដើម្បីបង្កើត។", EMAIL_SUBMENU_KB);
-      }
-      const now = Date.now();
-      const lines = entries.map(([sessUid, s], i) => {
-        const exp = s.expiresAt ? new Date(s.expiresAt).toISOString().slice(0, 16).replace("T", " ") : "—";
-        const expired = s.expiresAt && new Date(s.expiresAt).getTime() < now;
-        const status = expired ? "❌ ផុតកំណត់" : "✅ សកម្ម";
-        const mine = String(sessUid) === String(uid) ? " <b>(អ្នក)</b>" : "";
-        return `${i + 1}. 📧 <code>${esc(s.address)}</code>${mine}\n    ${status} | ⏱ ${esc(exp)} UTC`;
-      });
-      return sendMsg(ctx, chatId,
-        `📋 <b>បញ្ជី Email Sessions (${entries.length})</b>\n\n` + lines.join("\n\n"),
-        EMAIL_SUBMENU_KB);
-    }
-
-    case BTN_EMAIL_CLEAR:
-      setDropmailSession(uid, null);
-      return sendMsg(ctx, chatId, "🗑 បានលុប Email session — ចុច 📨 Email ថ្មី ដើម្បីបង្កើតម្ដងទៀត។", EMAIL_SUBMENU_KB);
 
     default:
       return sendAdminSettingsMenu(ctx, chatId);
@@ -1314,16 +1052,6 @@ async function handleAdminInput(ctx, chatId, uid, msgId, key, text) {
     return sendMsg(ctx, chatId, `✅ បានដក <code>${target}</code> ចាក admin`);
   }
 
-  if (key === "email_token") {
-    if (!text) return sendMsg(ctx, chatId, "❌ Token មិនអាចទទេបានទេ (ឬចុច 🚫 បោះបង់)");
-    DROPMAIL_TOKEN = text;
-    setSetting("DROPMAIL_TOKEN", text);
-    delete user_sessions[uid]; saveSessions();
-    deleteMsg(ctx, chatId, msgId).catch(() => {});
-    return sendMsg(ctx, chatId,
-      `✅ បានកំណត់ <b>Dropmail Token</b>\n<code>${esc(text.slice(0,8))}…</code>\n\nឥឡូវចុច 📨 Email ថ្មី ដើម្បីបង្កើត Email!`,
-      EMAIL_SUBMENU_KB);
-  }
 
   if (key === "broadcast") {
     // Store message for forward/copy broadcast
@@ -1526,15 +1254,11 @@ function loadAll() {
   const ch = getSetting("TELEGRAM_CHANNEL_ID"); if (ch) CHANNEL_ID = ch;
   const kk = getSetting("KHPAY_API_KEY");      if (kk)   KHPAY_API_KEY = kk;
   const ea = getSetting("EXTRA_ADMIN_IDS");    if (ea)   { try { EXTRA_ADMIN_IDS = new Set(JSON.parse(ea).map(Number)); } catch {} }
-  const dt = getSetting("DROPMAIL_TOKEN");     if (dt)   DROPMAIL_TOKEN = dt;
-
   // Persistent webhook secret — generate once, reuse on restart
   let whs = getSetting("WEBHOOK_SECRET");
   if (!whs) { whs = crypto.randomBytes(16).toString("hex"); setSetting("WEBHOOK_SECRET", whs); }
   WEBHOOK_SECRET = whs;
   WEBHOOK_URL    = `https://${process.env.REPLIT_DEV_DOMAIN || "localhost"}/khpay-webhook?secret=${WEBHOOK_SECRET}`;
-
-  loadSeenHashes();
 
   const couponCount = Object.values(accounts_data.account_types).reduce((s, a) => s + a.length, 0);
   console.log(`[INFO] Loaded: ${couponCount} coupons, ${Object.keys(known_users).length} users, ${purchases.length} purchases`);
@@ -1555,5 +1279,4 @@ bot.launch();
   await recoverPendingSessions();
   startWebhookServer();
   startPaymentWatchdog();
-  startEmailLivePolling();
 })();

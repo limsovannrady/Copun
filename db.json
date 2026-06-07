@@ -3,9 +3,6 @@
     "account_types": {
       "I": [
         {
-          "code": "Iddhsi"
-        },
-        {
           "code": "Hsis@929.c"
         }
       ],
@@ -26,7 +23,11 @@
   },
   "sessions": {
     "7433145236": {
-      "state": "admin_input:secret_remove"
+      "state": "waiting_for_quantity",
+      "account_type": "I",
+      "price": 0.01,
+      "available_count": 1,
+      "started_at": 1780848257989
     }
   },
   "settings": {
@@ -57,6 +58,18 @@
         }
       ],
       "purchased_at": "2026-06-07T11:54:35.800Z"
+    },
+    {
+      "user_id": 5002402843,
+      "account_type": "I",
+      "quantity": 1,
+      "total_price": 0.01,
+      "accounts": [
+        {
+          "code": "Iddhsi"
+        }
+      ],
+      "purchased_at": "2026-06-07T12:14:32.767Z"
     }
   ]
 }
