@@ -170,10 +170,21 @@ async function createKhpayPayment(amount, note = "") {
     if (!data.success) {
       return { imgBuffer: null, transaction_id: null, error: data.error || "API error" };
     }
-    const { transaction_id, qr: qr_string, expires_in, md5 } = data.data;
+    const { transaction_id, qr: qr_string, expires_in, md5, download_qr } = data.data;
 
-    // Render QR from qr_string locally (reliable, no extra fetch)
-    const imgBuffer = await QRCode.toBuffer(qr_string, { errorCorrectionLevel: "M", width: 400, margin: 2 });
+    // Fetch official Bakong KHQR image from KhPay; fallback to local render
+    let imgBuffer;
+    if (download_qr) {
+      try {
+        const imgRes = await fetch(download_qr, { signal: AbortSignal.timeout(10000) });
+        if (imgRes.ok) {
+          imgBuffer = Buffer.from(await imgRes.arrayBuffer());
+        }
+      } catch {}
+    }
+    if (!imgBuffer) {
+      imgBuffer = await QRCode.toBuffer(qr_string, { errorCorrectionLevel: "M", width: 400, margin: 2 });
+    }
     return { imgBuffer, transaction_id, md5: md5 ?? null, expires_in: expires_in ?? 180, error: null };
   } catch (e) {
     return { imgBuffer: null, transaction_id: null, error: e.message };
