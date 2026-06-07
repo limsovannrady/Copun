@@ -12,12 +12,13 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || "";
 if (!BOT_TOKEN) { console.error("[ERROR] TELEGRAM_BOT_TOKEN is not set. Exiting."); process.exit(1); }
 
-const ADMIN_ID               = 5002402843;
+const ADMIN_ID               = Number(process.env.ADMIN_ID || "");
+if (!ADMIN_ID) { console.error("[ERROR] ADMIN_ID is not set. Exiting."); process.exit(1); }
 let   EXTRA_ADMIN_IDS        = new Set();
 let   CHANNEL_ID             = "";
 let   PAYMENT_NAME           = "RADY";
 let   MAINTENANCE_MODE       = false;
-let   KHPAY_API_KEY          = "ak_5de3149200e549b740b513233fa2a90930f8d2efadabcd92";
+let   KHPAY_API_KEY          = process.env.KHPAY_API_KEY || "";
 
 const KHPAY_BASE             = "https://www.khpay.site/api/v1";
 const PAYMENT_TIMEOUT_SEC    = 60;

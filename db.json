@@ -1,12 +1,36 @@
 {
   "accounts": {
-    "accounts": [],
-    "account_types": {},
-    "prices": {}
+    "accounts": [
+      {
+        "code": "Iajsis,sisi.i"
+      }
+    ],
+    "account_types": {
+      "1": []
+    },
+    "prices": {
+      "1": 0.01
+    }
   },
   "sessions": {
     "5002402843": {
-      "state": "waiting_for_accounts"
+      "state": "payment_pending",
+      "account_type": "1",
+      "price": 0.01,
+      "available_count": 0,
+      "started_at": 1780849233198,
+      "quantity": 1,
+      "total_price": 0.01,
+      "reserved_accounts": [
+        {
+          "code": "Iajsis,sisi.i"
+        }
+      ],
+      "transaction_id": "bk_384FC0A96D8920E1",
+      "md5": "650dac9cafad306918b8097791669135",
+      "qr_sent_at": 1780849236473,
+      "photo_message_id": 882,
+      "qr_message_id": 882
     }
   },
   "settings": {
