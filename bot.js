@@ -557,16 +557,13 @@ async function deliverAccounts(ctx, chatId, userId, session, paymentData = null)
   });
   savePurchases();
 
-  // Build delivery message (100% identical format to GitHub)
-  let msg = `<tg-emoji emoji-id="5436040291507247633">🎉</tg-emoji> <b>ការទិញបានបញ្ជាក់ដោយជោគជ័យ</b>\n\n`;
-  msg += `<blockquote>🔹 ប្រភេទ: ${esc(account_type)}\n🔹 ចំនួន: ${quantity}</blockquote>\n\n`;
-  msg += `<b>គូប៉ុង របស់អ្នក៖</b>\n\n`;
-  for (const acc of delivered) {
-    msg += `${esc(formatAccount(acc))}\n`;
+  // Build delivery message — one message per coupon
+  for (let i = 0; i < delivered.length; i++) {
+    const acc = delivered[i];
+    const msg = `📩 <b>លេខកូដផ្ទៀងផ្ទាត់ E-GetS</b>\n\n<code>${esc(formatAccount(acc))}</code>\n\n<code>${userId}</code>`;
+    const isLast = i === delivered.length - 1;
+    await sendMsg(ctx, chatId, msg, isLast ? mainKb(userId) : undefined);
   }
-  msg += `\n<i>សូមអរគុណសម្រាប់ការទិញ <tg-emoji emoji-id="5897474556834091884">🙏</tg-emoji></i>`;
-
-  await sendMsg(ctx, chatId, msg, mainKb(userId));
 
   // Admin notification
   try {
