@@ -1327,6 +1327,12 @@ function loadAll() {
   console.log(`[INFO] Loaded: ${couponCount} coupons, ${Object.keys(known_users).length} users, ${purchases.length} purchases`);
 }
 
+bot.catch((err, ctx) => {
+  const desc = err?.response?.description ?? err?.message ?? String(err);
+  if (desc.includes("query is too old") || desc.includes("query ID is invalid")) return;
+  console.warn("[BotError]", desc);
+});
+
 process.once("SIGINT",  () => bot.stop("SIGINT"));
 process.once("SIGTERM", () => bot.stop("SIGTERM"));
 

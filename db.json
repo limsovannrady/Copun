@@ -23,6 +23,13 @@
   "settings": {
     "WEBHOOK_SECRET": "24a95bb55213eef59e2a110fdbdd7515"
   },
-  "users": {},
+  "users": {
+    "7433145236": {
+      "first_name": "MrDauau",
+      "last_name": "",
+      "username": "",
+      "first_seen": "2026-06-07T16:36:13.370Z"
+    }
+  },
   "purchases": []
 }
