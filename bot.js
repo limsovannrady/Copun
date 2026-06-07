@@ -108,10 +108,9 @@ const ADMIN_KB = Markup.keyboard([[ADMIN_SETTINGS_BTN]]).resize().persistent();
 const ADMIN_SETTINGS_KB = Markup.keyboard([
   [BTN_ADD_ACCOUNT, BTN_DELETE_TYPE],
   [BTN_STOCK,       BTN_BUYERS],
-  [BTN_USERS],
-  [BTN_KHPAY,       BTN_CHANNEL],
-  [BTN_ADMINS,      BTN_BROADCAST],
-  [BTN_MAINTENANCE],
+  [BTN_USERS,       BTN_KHPAY],
+  [BTN_CHANNEL,     BTN_ADMINS],
+  [BTN_BROADCAST,   BTN_MAINTENANCE],
 ]).resize().persistent();
 
 const CANCEL_INPUT_KB    = Markup.keyboard([[BTN_CANCEL_INPUT]]).resize().persistent();

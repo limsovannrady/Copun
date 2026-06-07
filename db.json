@@ -12,6 +12,9 @@
         },
         {
           "code": "Iajsis,sisi.i"
+        },
+        {
+          "code": "Iajsis,sisi.i"
         }
       ]
     },
@@ -19,27 +22,7 @@
       "1": 0.01
     }
   },
-  "sessions": {
-    "5002402843": {
-      "state": "payment_pending",
-      "account_type": "1",
-      "price": 0.01,
-      "available_count": 1,
-      "started_at": 1780850471978,
-      "quantity": 1,
-      "total_price": 0.01,
-      "reserved_accounts": [
-        {
-          "code": "Iajsis,sisi.i"
-        }
-      ],
-      "transaction_id": "bk_FF1E0DA5012E0ACF",
-      "md5": "41f1c82cc1547e9561bf71861a783064",
-      "qr_sent_at": 1780850475126,
-      "photo_message_id": 961,
-      "qr_message_id": 961
-    }
-  },
+  "sessions": {},
   "settings": {
     "WEBHOOK_SECRET": "24a95bb55213eef59e2a110fdbdd7515"
   },
