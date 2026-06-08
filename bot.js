@@ -1,7 +1,6 @@
 import fs from "fs";
 import path from "path";
 import crypto from "crypto";
-import http from "http";
 import { fileURLToPath } from "url";
 import QRCode from "qrcode";
 import { Telegraf, Markup } from "telegraf";
@@ -20,11 +19,6 @@ let KHPAY_API_KEY   = process.env.KHPAY_API_KEY || "";
 const KHPAY_BASE    = "https://www.khpay.site/api/v1";
 const PAYMENT_TIMEOUT_SEC   = 60;
 const PAYMENT_POLL_INTERVAL = 5;
-const WEBHOOK_PORT  = 5000;
-let WEBHOOK_SECRET  = "";
-let WEBHOOK_URL     = "";
-let TG_WEBHOOK_URL  = "";
-let TG_WEBHOOK_SECRET = "";
 
 const DB_FILE = path.join(__dirname, "db.json");
 let accounts_data = { account_types: {}, prices: {} };
@@ -123,7 +117,7 @@ async function generatePlainQR(qr_string) {
 
 async function createKhpayPayment(amount, note = "") {
   try {
-    const data = await khpayRequest("POST", "/bakong/generate", { amount, note: note || PAYMENT_NAME, callback_url: WEBHOOK_URL });
+    const data = await khpayRequest("POST", "/bakong/generate", { amount, note: note || PAYMENT_NAME });
     if (!data.success) return { imgBuffer: null, transaction_id: null, error: data.error || "API error" };
     const d = data.data;
     const { transaction_id, md5 } = d;
@@ -269,65 +263,6 @@ async function startPaymentForSession(ctx, chatId, userId, session, cbQuery = nu
   return true;
 }
 
-function startWebhookServer() {
-  const server = http.createServer((req, res) => {
-    const url = new URL(req.url, `http://localhost`);
-
-    // Health check
-    if (req.method === "GET" && url.pathname === "/") { res.writeHead(200); res.end("OK"); return; }
-
-    if (req.method !== "POST") { res.writeHead(404); res.end(); return; }
-
-    // ── Telegram webhook (/telegram) ─────────────────────────────────────────
-    if (url.pathname === "/telegram") {
-      const tgSecret = req.headers["x-telegram-bot-api-secret-token"] || "";
-      if (TG_WEBHOOK_SECRET && tgSecret !== TG_WEBHOOK_SECRET) {
-        console.warn("[TG Webhook] Rejected: bad secret");
-        res.writeHead(403); res.end(); return;
-      }
-      let body = "";
-      req.on("data", chunk => { body += chunk; });
-      req.on("end", async () => {
-        res.writeHead(200); res.end("OK");
-        try { await bot.handleUpdate(JSON.parse(body)); }
-        catch (e) { console.warn("[TG Webhook] handleUpdate error:", e.message); }
-      });
-      return;
-    }
-
-    // ── KhPay webhook (/khpay-webhook) ───────────────────────────────────────
-    if (url.pathname !== "/khpay-webhook") { res.writeHead(404); res.end(); return; }
-    if (url.searchParams.get("secret") !== WEBHOOK_SECRET) { console.warn("[Webhook] Rejected: invalid secret"); res.writeHead(403); res.end(); return; }
-    let body = "";
-    req.on("data", chunk => { body += chunk; });
-    req.on("end", async () => {
-      res.writeHead(200); res.end("OK");
-      try {
-        const payload = JSON.parse(body);
-        const txnId  = payload?.transaction_id ?? payload?.data?.transaction_id;
-        const status = (payload?.status ?? payload?.data?.status ?? "").toLowerCase();
-        const isPaid = status === "paid" || status === "success" || status === "completed" || payload?.data?.transaction != null;
-        console.log(`[Webhook] Received: txn=${txnId} status=${status}`);
-        if (!txnId || !isPaid) return;
-        const entry = Object.entries(user_sessions).find(([, s]) => s.state === "payment_pending" && s.transaction_id === txnId);
-        if (!entry) return;
-        const [uidStr, sess] = entry;
-        const userId = Number(uidStr);
-        if (sess.state !== "payment_pending") return;
-        sess.state = "delivering";
-        console.log(`[Webhook] ✅ Payment confirmed instantly for user ${userId}: ${txnId}`);
-        const fakeCtx = { telegram: bot.telegram };
-        await deliverAccounts(fakeCtx, userId, userId, sess, payload?.data ?? payload);
-      } catch (e) { console.warn("[Webhook] Error processing payload:", e.message); }
-    });
-  });
-
-  server.listen(WEBHOOK_PORT, () => {
-    console.log(`[Webhook] Server on port ${WEBHOOK_PORT}`);
-    console.log(`[Webhook] KhPay URL: ${WEBHOOK_URL}`);
-    console.log(`[TG Webhook] URL:    ${TG_WEBHOOK_URL}`);
-  });
-}
 
 const _delivering = new Set();
 let _watchdogTimer = null;
@@ -912,14 +847,6 @@ function loadAll() {
   const ch = getSetting("TELEGRAM_CHANNEL_ID"); if (ch)  CHANNEL_ID      = ch;
   const kk = getSetting("KHPAY_API_KEY");       if (kk)  KHPAY_API_KEY   = kk;
   const ea = getSetting("EXTRA_ADMIN_IDS");     if (ea)  { try { EXTRA_ADMIN_IDS = new Set(JSON.parse(ea).map(Number)); } catch {} }
-  let whs = getSetting("WEBHOOK_SECRET");
-  if (!whs) { whs = crypto.randomBytes(16).toString("hex"); setSetting("WEBHOOK_SECRET", whs); }
-  WEBHOOK_SECRET = whs;
-  WEBHOOK_URL    = `https://${process.env.REPLIT_DEV_DOMAIN || "localhost"}/khpay-webhook?secret=${WEBHOOK_SECRET}`;
-  let tgwhs = getSetting("TG_WEBHOOK_SECRET");
-  if (!tgwhs) { tgwhs = crypto.randomBytes(20).toString("hex"); setSetting("TG_WEBHOOK_SECRET", tgwhs); }
-  TG_WEBHOOK_SECRET = tgwhs;
-  TG_WEBHOOK_URL    = `https://${process.env.REPLIT_DEV_DOMAIN || "localhost"}/telegram`;
   const couponCount = Object.values(accounts_data.account_types).reduce((s, a) => s + a.length, 0);
   console.log(`[INFO] Loaded: ${couponCount} coupons, ${Object.keys(known_users).length} users, ${purchases.length} purchases`);
 }
@@ -960,26 +887,15 @@ process.once("SIGINT",  () => { bot.stop("SIGINT");  });
 process.once("SIGTERM", () => { bot.stop("SIGTERM"); });
 
 loadAll();
-startWebhookServer();
 
 (async () => {
   try {
+    await bot.telegram.deleteWebhook({ drop_pending_updates: false });
     const me = await bot.telegram.getMe();
     console.log(`[INFO] Bot ready: @${me.username}`);
-    // Register Telegram webhook automatically on startup
-    try {
-      await bot.telegram.setWebhook(TG_WEBHOOK_URL, {
-        secret_token: TG_WEBHOOK_SECRET,
-        allowed_updates: ["message", "callback_query", "channel_post"],
-      });
-      console.log(`[TG Webhook] ✅ Registered: ${TG_WEBHOOK_URL}`);
-    } catch (e) {
-      console.warn(`[TG Webhook] ⚠️ Could not register webhook: ${e.message}`);
-      console.warn("[TG Webhook] Bot falling back to long-polling...");
-      bot.launch();
-    }
-    try { await bot.telegram.sendMessage(ADMIN_ID, "✅ <b>Bot ចាប់ផ្ដើម! (Webhook mode 24/7)</b>", { parse_mode: "HTML" }); } catch {}
+    try { await bot.telegram.sendMessage(ADMIN_ID, "✅ <b>Bot ចាប់ផ្ដើម! (Long-polling mode)</b>", { parse_mode: "HTML" }); } catch {}
   } catch (e) { console.warn("[ERROR] getMe failed:", e.message); }
   await recoverPendingSessions();
   startPaymentWatchdog();
+  bot.launch();
 })();
