@@ -534,13 +534,11 @@ bot.on("text", async ctx => {
     }
 
     if (state === "broadcast_confirm") {
-      const bcastMsgId  = sess.broadcast_message_id;
-      const bcastChatId = sess.broadcast_chat_id || chatId;
-      const useCopy     = Boolean(sess.broadcast_use_copy);
+      const bcastText = sess.broadcast_text || "";
       delete user_sessions[uid]; saveSessions();
-      if (text === BTN_BROADCAST_CONFIRM && bcastMsgId) {
+      if (text === BTN_BROADCAST_CONFIRM && bcastText) {
         await sendMsg(ctx, chatId, "📢 កំពុង​ផ្សាយ​សារ ... សូមរង់ចាំ", ADMIN_SETTINGS_KB);
-        runBroadcast(ctx, chatId, bcastChatId, bcastMsgId, useCopy);
+        runBroadcast(ctx, chatId, bcastText);
       } else { await sendMsg(ctx, chatId, "🚫 <b>បាន​បោះបង់​ការ​ផ្សាយ</b>", ADMIN_SETTINGS_KB); }
       return;
     }
@@ -702,17 +700,19 @@ async function handleAdminInput(ctx, chatId, uid, msgId, key, text) {
   }
 }
 
-async function runBroadcast(ctx, adminChatId, srcChatId, srcMsgId, useCopy) {
+async function runBroadcast(ctx, adminChatId, bcastText) {
   const uids = Object.keys(known_users);
   let sent = 0, failed = 0, blocked = 0;
   for (const uidStr of uids) {
     const uid = Number(uidStr);
     try {
-      if (useCopy) { await ctx.telegram.copyMessage(uid, srcChatId, srcMsgId); }
-      else { await ctx.telegram.forwardMessage(uid, srcChatId, srcMsgId); }
+      await ctx.telegram.sendMessage(uid, bcastText, { parse_mode: "HTML" });
       sent++;
     } catch (e) {
-      if (e.message?.includes("blocked") || e.message?.includes("deactivated")) blocked++; else failed++;
+      const msg = e.message || "";
+      console.warn(`[Broadcast] Failed uid=${uid}: ${msg}`);
+      if (msg.includes("blocked") || msg.includes("deactivated") || msg.includes("kicked") || msg.includes("not found")) blocked++;
+      else failed++;
     }
     await new Promise(r => setTimeout(r, 50));
   }

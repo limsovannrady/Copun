@@ -20,11 +20,7 @@
       "Y": 0.01
     }
   },
-  "sessions": {
-    "5002402843": {
-      "state": "admin_input:broadcast"
-    }
-  },
+  "sessions": {},
   "settings": {
     "WEBHOOK_SECRET": "24a95bb55213eef59e2a110fdbdd7515",
     "TG_WEBHOOK_SECRET": "0efdee793428c00558f756cd04e10210914ebfe0"
@@ -100,6 +96,21 @@
         }
       ],
       "purchased_at": "2026-06-07T17:30:08.075Z"
+    },
+    {
+      "user_id": 5002402843,
+      "account_type": "Y",
+      "quantity": 2,
+      "total_price": 0.02,
+      "accounts": [
+        {
+          "code": "09k39yev8c@spymail.one"
+        },
+        {
+          "code": "09k39yev8c@spymail.one"
+        }
+      ],
+      "purchased_at": "2026-06-08T17:46:14.675Z"
     }
   ]
 }
