@@ -9,6 +9,9 @@
           "code": "09k39yev8c@spymail.one"
         },
         {
+          "code": "09k39yev8c@spymail.one"
+        },
+        {
           "code": "ajkpfcostuoqbp@dropmail.me"
         }
       ]
@@ -17,7 +20,11 @@
       "Y": 0.01
     }
   },
-  "sessions": {},
+  "sessions": {
+    "5002402843": {
+      "state": "admin_input:broadcast"
+    }
+  },
   "settings": {
     "WEBHOOK_SECRET": "24a95bb55213eef59e2a110fdbdd7515",
     "TG_WEBHOOK_SECRET": "0efdee793428c00558f756cd04e10210914ebfe0"
