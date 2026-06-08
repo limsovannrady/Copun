@@ -10,7 +10,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || "";
 if (!BOT_TOKEN) { console.error("[ERROR] TELEGRAM_BOT_TOKEN is not set. Exiting."); process.exit(1); }
-const ADMIN_ID = 5002402843;
+const ADMIN_ID = Number(process.env.ADMIN_ID || "5002402843");
 
 let EXTRA_ADMIN_IDS = new Set();
 let CHANNEL_ID      = process.env.CHANNEL_ID || "";
