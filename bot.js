@@ -15,8 +15,8 @@ let EXTRA_ADMIN_IDS = new Set();
 let CHANNEL_ID      = process.env.CHANNEL_ID || "";
 let PAYMENT_NAME    = "RADY";
 let MAINTENANCE_MODE = false;
-let KHPAY_API_KEY   = process.env.KHPAY_API_KEY || "";
-const KHPAY_BASE    = "https://www.khpay.site/api/v1";
+let CAMBO_API_TOKEN = process.env.CAMBO_API_TOKEN || "";
+const CAMBO_BASE    = "https://bakong.cambo-kh.com/api/v1";
 const PAYMENT_TIMEOUT_SEC   = 60;
 const PAYMENT_POLL_INTERVAL = 5;
 
@@ -103,10 +103,10 @@ const CHECK_PAYMENT_INLINE   = Markup.inlineKeyboard([[
 ]]);
 const mainKb = uid => isAdmin(uid) ? ADMIN_KB : Markup.removeKeyboard();
 
-async function khpayRequest(method, path, body = null) {
-  const opts = { method, headers: { Authorization: `Bearer ${KHPAY_API_KEY}`, "Content-Type": "application/json" }, signal: AbortSignal.timeout(12000) };
-  if (body) opts.body = JSON.stringify(body);
-  const res = await fetch(`${KHPAY_BASE}${path}`, opts);
+async function camboRequest(params = {}) {
+  params.api_token = CAMBO_API_TOKEN;
+  const qs = new URLSearchParams(params).toString();
+  const res = await fetch(`${CAMBO_BASE}/?${qs}`, { signal: AbortSignal.timeout(12000) });
   const text = await res.text();
   try { return JSON.parse(text); } catch { return { success: false, error: text }; }
 }
@@ -117,44 +117,34 @@ async function generatePlainQR(qr_string) {
 
 async function createKhpayPayment(amount, note = "") {
   try {
-    const data = await khpayRequest("POST", "/bakong/generate", { amount, note: note || PAYMENT_NAME });
-    if (!data.success) return { imgBuffer: null, transaction_id: null, error: data.error || "API error" };
-    const d = data.data;
-    const { transaction_id, md5 } = d;
-    const qr_string = d.qr || d.qr_string || d.qr_code || "";
-    let expires_in = d.expires_in ?? 180;
-    if (d.expires_at) { const secs = Math.floor((new Date(d.expires_at) - Date.now()) / 1000); if (secs > 0) expires_in = secs; }
+    const data = await camboRequest({ type: "generate_qr", amount });
+    if (data.error || data.status === "error") return { imgBuffer: null, transaction_id: null, error: data.error || data.message || "API error" };
+    const md5 = data.md5 || data.transaction_id || data.data?.md5 || null;
+    const qr_string = data.qr_string || data.qr || data.qrcode || data.data?.qr_string || "";
+    const expires_in = data.expires_in ?? data.data?.expires_in ?? 180;
     let imgBuffer;
-    const imgUrl = d.download_qr || d.image_url || d.qr_image_url || d.image || d.qr_image || null;
+    const imgUrl = data.qr_image || data.image_url || data.download_qr || data.data?.qr_image || null;
     if (imgUrl) {
       try {
         const r = await fetch(imgUrl, { signal: AbortSignal.timeout(10000) });
-        if (r.ok) { imgBuffer = Buffer.from(await r.arrayBuffer()); console.log("[KhPay] Using API image:", imgUrl); }
+        if (r.ok) { imgBuffer = Buffer.from(await r.arrayBuffer()); console.log("[Cambo] Using API image:", imgUrl); }
         else throw new Error(`HTTP ${r.status}`);
-      } catch (e) { console.warn("[KhPay] Image download failed, using plain QR:", e.message); imgBuffer = await generatePlainQR(qr_string); }
-    } else { imgBuffer = await generatePlainQR(qr_string); }
-    return { imgBuffer, transaction_id, md5: md5 ?? null, expires_in: expires_in ?? 180, error: null };
+      } catch (e) { console.warn("[Cambo] Image download failed, using plain QR:", e.message); imgBuffer = await generatePlainQR(qr_string); }
+    } else if (qr_string) { imgBuffer = await generatePlainQR(qr_string); }
+    else return { imgBuffer: null, transaction_id: null, error: "No QR data returned" };
+    return { imgBuffer, transaction_id: md5, md5, expires_in, error: null };
   } catch (e) { return { imgBuffer: null, transaction_id: null, error: e.message }; }
 }
 
 async function checkKhpayStatus(transaction_id, md5 = null) {
   try {
-    const data = await khpayRequest("GET", `/transactions/${transaction_id}`);
-    if (data.success) {
-      const d = data.data;
-      const status = (d.status ?? "").toLowerCase();
-      if (status === "paid" || status === "success" || status === "completed" || !!d.paid_at) return { paid: true, status, data: d };
-    }
-    const bkBody = md5 ? { transaction_id, md5 } : { transaction_id };
-    const bk = await khpayRequest("POST", "/bakong/check", bkBody);
-    if (bk.success && bk.data) {
-      const bkStatus = (bk.data.status ?? "").toLowerCase();
-      const bkPaid = bkStatus === "paid" || bkStatus === "success" || bkStatus === "completed"
-        || bk.data.transaction !== null && bk.data.transaction !== undefined;
-      if (bkPaid) return { paid: true, status: bkStatus, data: bk.data.transaction ?? bk.data };
-    }
-    const fallbackStatus = data.success ? (data.data?.status ?? "pending") : "error";
-    return { paid: false, status: fallbackStatus, data: data.data ?? null };
+    const checkMd5 = md5 || transaction_id;
+    const data = await camboRequest({ type: "check_md5", md5: checkMd5 });
+    const status = (data?.status ?? data?.data?.status ?? data?.payment_status ?? "").toLowerCase();
+    const isPaid = status === "paid" || status === "success" || status === "completed"
+      || data?.paid === true || data?.data?.paid === true
+      || (data?.data?.transaction != null && data?.data?.transaction !== undefined);
+    return { paid: isPaid, status: status || "pending", data: data?.data ?? data };
   } catch (e) { console.warn("[WARN] checkKhpayStatus:", e.message); return { paid: false, status: "error", data: null }; }
 }
 
@@ -631,10 +621,10 @@ async function dispatchAdminButton(ctx, chatId, uid, btn) {
     case BTN_STOCK:    return exportStock(ctx, chatId);
     case BTN_BUYERS:   return exportBuyers(ctx, chatId);
     case BTN_USERS:    return showUsersList(ctx, chatId);
-    case BTN_KHPAY:    return sendMsg(ctx, chatId, `💰 <b>KhPay API Key បច្ចុប្បន្ន៖</b>\n\n<code>${esc(KHPAY_API_KEY)}</code>`, KHPAY_SUBMENU_KB);
+    case BTN_KHPAY:    return sendMsg(ctx, chatId, `💰 <b>Cambo API Token បច្ចុប្បន្ន៖</b>\n\n<code>${esc(CAMBO_API_TOKEN)}</code>`, KHPAY_SUBMENU_KB);
     case BTN_KHPAY_KEY_EDIT:
       user_sessions[uid] = { state: "admin_input:khpay_key" }; saveSessions();
-      return sendMsg(ctx, chatId, "💰 សូមផ្ញើ <b>KhPay API Key</b> ថ្មី:\n\n<i>ចុច 🚫 បោះបង់ ដើម្បីបោះបង់</i>", CANCEL_INPUT_KB);
+      return sendMsg(ctx, chatId, "💰 សូមផ្ញើ <b>Cambo API Token</b> ថ្មី:\n\n<i>ចុច 🚫 បោះបង់ ដើម្បីបោះបង់</i>", CANCEL_INPUT_KB);
     case BTN_KHPAY_INFO: return sendKhpayInfo(ctx, chatId);
     case BTN_CHANNEL: {
       const cur = CHANNEL_ID || "(មិនទាន់កំណត់)";
@@ -675,11 +665,11 @@ async function handleAdminInput(ctx, chatId, uid, msgId, key, text) {
   if (cancelWords.has(text)) { delete user_sessions[uid]; saveSessions(); return sendAdminSettingsMenu(ctx, chatId); }
 
   if (key === "khpay_key") {
-    if (!text || !text.startsWith("ak_")) return sendMsg(ctx, chatId, "❌ KhPay API Key ត្រូវចាប់ផ្ដើមដោយ <code>ak_</code>\n\nសូមផ្ញើ Key ត្រឹមត្រូវ (ឬចុច 🚫 បោះបង់)");
-    KHPAY_API_KEY = text; setSetting("KHPAY_API_KEY", text);
+    if (!text) return sendMsg(ctx, chatId, "❌ Token មិនត្រឹមត្រូវ\n\nសូមផ្ញើ Token ត្រឹមត្រូវ (ឬចុច 🚫 បោះបង់)");
+    CAMBO_API_TOKEN = text; setSetting("CAMBO_API_TOKEN", text);
     delete user_sessions[uid]; saveSessions();
     deleteMsg(ctx, chatId, msgId).catch(() => {});
-    return sendMsg(ctx, chatId, `✅ បានប្តូរ <b>KhPay API Key</b>\n<code>${esc(text.slice(0, 12))}…${esc(text.slice(-4))}</code>`, mainKb(uid));
+    return sendMsg(ctx, chatId, `✅ បានប្តូរ <b>Cambo API Token</b>\n<code>${esc(text.slice(0, 12))}…${esc(text.slice(-4))}</code>`, mainKb(uid));
   }
 
   if (key === "channel") {
@@ -804,21 +794,18 @@ async function showUsersList(ctx, chatId) {
 
 async function sendKhpayInfo(ctx, chatId) {
   try {
-    const data = await khpayRequest("GET", "/me");
-    if (!data.success) return sendMsg(ctx, chatId, `💰 <b>KhPay API Info</b>\n\n❌ ${esc(data.error || "API Error")}`, KHPAY_SUBMENU_KB);
-    const d   = data.data;
-    const key = KHPAY_API_KEY;
+    const token = CAMBO_API_TOKEN;
+    const short = token ? `<code>${esc(token.slice(0, 16))}…${esc(token.slice(-4))}</code>` : "❌ មិនទាន់កំណត់";
     const lines = [
-      "💰 <b>KhPay Account Info</b>", "━━━━━━━━━━━━━━━━━━━",
-      `👤 <b>ឈ្មោះ:</b> ${esc(d.name || "—")}`, `📧 <b>Email:</b> <code>${esc(d.email || "—")}</code>`,
-      `📦 <b>Plan:</b> ${esc(d.plan || "—")}`, `🔑 <b>API Key:</b> <code>${esc(key)}</code>`,
-      `💳 <b>Bakong:</b> ${d.bakong_configured ? "✅ Configured" : "❌ Not set"}`,
-      `🔗 <b>Payway:</b> ${d.payway_link_set ? "✅ Linked" : "❌ Not linked"}`,
-      "━━━━━━━━━━━━━━━━━━━", `📊 <b>ការប្រើប្រាស់ API:</b>`,
-      `   • ថ្ងៃនេះ: ${d.usage?.today ?? 0}`, `   • ខែនេះ: ${d.usage?.month ?? 0}`, `   • សរុប: ${d.usage?.total ?? 0}`,
+      "💰 <b>Cambo Payment Info</b>", "━━━━━━━━━━━━━━━━━━━",
+      `🌐 <b>API:</b> <code>bakong.cambo-kh.com</code>`,
+      `🔑 <b>Token:</b> ${short}`,
+      "━━━━━━━━━━━━━━━━━━━",
+      `✅ <b>Generate QR:</b> type=generate_qr`,
+      `✅ <b>Check MD5:</b> type=check_md5`,
     ];
     return sendMsg(ctx, chatId, lines.join("\n"), KHPAY_SUBMENU_KB);
-  } catch (e) { return sendMsg(ctx, chatId, `💰 <b>KhPay API Info</b>\n\n❌ Error: <code>${esc(e.message)}</code>`, KHPAY_SUBMENU_KB); }
+  } catch (e) { return sendMsg(ctx, chatId, `💰 <b>Cambo API Info</b>\n\n❌ Error: <code>${esc(e.message)}</code>`, KHPAY_SUBMENU_KB); }
 }
 
 
@@ -845,7 +832,8 @@ function loadAll() {
   const pm = getSetting("PAYMENT_NAME");        if (pm)  PAYMENT_NAME    = pm;
   const mm = getSetting("MAINTENANCE_MODE");    if (mm)  MAINTENANCE_MODE = mm === "true";
   const ch = getSetting("TELEGRAM_CHANNEL_ID"); if (ch)  CHANNEL_ID      = ch;
-  const kk = getSetting("KHPAY_API_KEY");       if (kk)  KHPAY_API_KEY   = kk;
+  const kk = getSetting("CAMBO_API_TOKEN");      if (kk)  CAMBO_API_TOKEN = kk;
+  else if (process.env.CAMBO_API_TOKEN)          CAMBO_API_TOKEN = process.env.CAMBO_API_TOKEN;
   const ea = getSetting("EXTRA_ADMIN_IDS");     if (ea)  { try { EXTRA_ADMIN_IDS = new Set(JSON.parse(ea).map(Number)); } catch {} }
   const couponCount = Object.values(accounts_data.account_types).reduce((s, a) => s + a.length, 0);
   console.log(`[INFO] Loaded: ${couponCount} coupons, ${Object.keys(known_users).length} users, ${purchases.length} purchases`);
