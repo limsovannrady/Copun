@@ -111,6 +111,18 @@
         }
       ],
       "purchased_at": "2026-06-08T17:46:14.675Z"
+    },
+    {
+      "user_id": 5002402843,
+      "account_type": "Y",
+      "quantity": 1,
+      "total_price": 0.01,
+      "accounts": [
+        {
+          "code": "09k39yev8c@spymail.one"
+        }
+      ],
+      "purchased_at": "2026-06-08T17:49:31.567Z"
     }
   ]
 }
