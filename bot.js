@@ -662,7 +662,7 @@ async function handleAdminInput(ctx, chatId, uid, msgId, key, text) {
 
   if (key === "khpay_key") {
     if (!text) return sendMsg(ctx, chatId, "❌ Token មិនត្រឹមត្រូវ\n\nសូមផ្ញើ Token ត្រឹមត្រូវ (ឬចុច 🚫 បោះបង់)");
-    CAMBO_API_TOKEN = text; setSetting("CAMBO_API_TOKEN", text);
+    CAMBO_API_TOKEN = text;
     delete user_sessions[uid]; saveSessions();
     deleteMsg(ctx, chatId, msgId).catch(() => {});
     return sendMsg(ctx, chatId, `✅ បានប្តូរ <b>Cambo API Token</b>\n<code>${esc(text.slice(0, 12))}…${esc(text.slice(-4))}</code>`, mainKb(uid));
