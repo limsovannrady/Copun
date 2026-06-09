@@ -572,14 +572,23 @@ bot.on("text", async ctx => {
       if (text === BTN_BACK_SETTINGS || text === BTN_CANCEL_INPUT) { delete user_sessions[uid]; saveSessions(); return sendAdminSettingsMenu(ctx, chatId); }
       const lines = text.split("\n").map(l => l.trim()).filter(Boolean);
       if (!lines.length) return sendMsg(ctx, chatId, "<b>អ៊ីមែលមិនត្រឹមត្រូវតាមទម្រង់</b>", ADD_ACCOUNT_KB);
-      const newAccounts = lines.map(l => {
+      const seen = new Set();
+      const batchDupes = [];
+      const uniqueLines = [];
+      for (const l of lines) {
+        const key = l.toLowerCase();
+        if (seen.has(key)) { batchDupes.push(l); } else { seen.add(key); uniqueLines.push(l); }
+      }
+      if (!uniqueLines.length) return sendMsg(ctx, chatId, "❌ <b>គូប៉ុងទាំងអស់ដូចគ្នា!</b>\n\nសូមបញ្ចូលគូប៉ុងខុសៗគ្នា។", ADD_ACCOUNT_KB);
+      const newAccounts = uniqueLines.map(l => {
         if (l.includes("|")) { const [ph, pw] = l.split("|").map(s => s.trim()); return { phone: ph, password: pw }; }
         return { code: l };
       });
       const existingTypes = Object.keys(accounts_data.account_types);
       user_sessions[uid] = { state: "waiting_for_account_type", accounts: newAccounts }; saveSessions();
       const typeRows = [...existingTypes.map(t => [t]), [BTN_BACK_SETTINGS]];
-      return sendMsg(ctx, chatId, `<b>បានបញ្ចូល គូប៉ុង ចំនួន ${newAccounts.length}\n\nសូមជ្រើសរើស ឬបញ្ចូលប្រភេទ គូប៉ុង៖</b>`, Markup.keyboard(typeRows).resize().persistent());
+      const dupeWarn = batchDupes.length ? `\n\n⚠️ រំលង ${batchDupes.length} ដដែលៗក្នុង batch` : "";
+      return sendMsg(ctx, chatId, `<b>បានបញ្ចូល គូប៉ុង ចំនួន ${newAccounts.length}${dupeWarn}\n\nសូមជ្រើសរើស ឬបញ្ចូលប្រភេទ គូប៉ុង៖</b>`, Markup.keyboard(typeRows).resize().persistent());
     }
 
     if (state === "waiting_for_account_type") {

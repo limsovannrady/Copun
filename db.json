@@ -1,7 +1,30 @@
 {
   "accounts": {
-    "account_types": {},
-    "prices": {}
+    "account_types": {
+      "76": [
+        {
+          "code": "t1wehebikidog2@maximail.fyi"
+        },
+        {
+          "code": "lyl1fylejul3@maximail.vip"
+        },
+        {
+          "code": "fhvuysbx@10mail.org"
+        },
+        {
+          "code": "nmntjtmhr@emlpro.com"
+        },
+        {
+          "code": "alvxhepuf@10mail.org"
+        },
+        {
+          "code": "alknenntp@10mail.org"
+        }
+      ]
+    },
+    "prices": {
+      "76": 0.01
+    }
   },
   "sessions": {},
   "settings": {},
