@@ -207,13 +207,26 @@ async function notifyAdminNewUser(ctx, user) {
   await sendMsg(ctx, ADMIN_ID, `🆕 <b>អ្នកប្រើប្រាស់ថ្មី!</b>\n\n👤 ឈ្មោះ: ${esc(full)}\n🔖 Username: ${esc(uname)}\n🪪 ID: <code>${uid}</code>`);
 }
 
-async function showAccountSelection(ctx, chatId) {
+async function showAccountSelection(ctx, chatId, editMsgId = null) {
   const available = Object.entries(accounts_data.account_types)
     .filter(([, v]) => v.length > 0)
     .map(([at, v]) => ({ at, count: v.length }));
-  if (!available.length) { await sendMsg(ctx, chatId, "<i>សូមអភ័យទោស អស់ពីស្តុក 🪤</i>"); return; }
+  const text = "<b>សូមជ្រើសរើសគូប៉ុងដើម្បីទិញ៖</b>";
+  const emptyText = "<i>សូមអភ័យទោស អស់ពីស្តុក 🪤</i>";
+  if (!available.length) {
+    if (editMsgId) {
+      try { await ctx.telegram.editMessageText(chatId, editMsgId, null, emptyText, { parse_mode: "HTML" }); return; } catch {}
+    }
+    await sendMsg(ctx, chatId, emptyText); return;
+  }
   const rows = available.map(({ at, count }) => [Markup.button.callback(`${at} – មានក្នុងស្តុក ${count}`, `buy:${typeCallbackId(at)}`)]);
-  await sendMsg(ctx, chatId, "<b>សូមជ្រើសរើសគូប៉ុងដើម្បីទិញ៖</b>", Markup.inlineKeyboard(rows));
+  if (editMsgId) {
+    try {
+      await ctx.telegram.editMessageText(chatId, editMsgId, null, text, { parse_mode: "HTML", reply_markup: Markup.inlineKeyboard(rows).reply_markup });
+      return;
+    } catch {}
+  }
+  await sendMsg(ctx, chatId, text, Markup.inlineKeyboard(rows));
 }
 
 async function sendAdminSettingsMenu(ctx, chatId) {
@@ -382,8 +395,13 @@ bot.on("callback_query", async ctx => {
     const rows = [];
     for (let i = 0; i < qtyBtns.length; i += 5) rows.push(qtyBtns.slice(i, i + 5));
     rows.push([Markup.button.callback("🚫 បោះបង់", "cancel_buy")]);
-    await sendMsg(ctx, chatId, "<b>សូមជ្រើសរើសចំនួនដែលចង់ទិញ៖</b>", Markup.inlineKeyboard(rows));
-    deleteMsg(ctx, chatId, ctx.callbackQuery.message.message_id).catch(() => {});
+    const msgId = ctx.callbackQuery.message.message_id;
+    try {
+      await ctx.telegram.editMessageText(chatId, msgId, null, "<b>សូមជ្រើសរើសចំនួនដែលចង់ទិញ៖</b>", { parse_mode: "HTML", reply_markup: Markup.inlineKeyboard(rows).reply_markup });
+    } catch {
+      await sendMsg(ctx, chatId, "<b>សូមជ្រើសរើសចំនួនដែលចង់ទិញ៖</b>", Markup.inlineKeyboard(rows));
+      deleteMsg(ctx, chatId, msgId).catch(() => {});
+    }
     return;
   }
 
@@ -412,8 +430,7 @@ bot.on("callback_query", async ctx => {
       saveAccounts();
     }
     delete user_sessions[uid]; saveSessions();
-    deleteMsg(ctx, chatId, ctx.callbackQuery.message.message_id).catch(() => {});
-    await showAccountSelection(ctx, chatId);
+    await showAccountSelection(ctx, chatId, ctx.callbackQuery.message.message_id);
     return;
   }
 
