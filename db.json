@@ -3,9 +3,6 @@
     "account_types": {
       "76": [
         {
-          "code": "t1wehebikidog2@maximail.fyi"
-        },
-        {
           "code": "lyl1fylejul3@maximail.vip"
         },
         {
@@ -26,7 +23,27 @@
       "76": 0.01
     }
   },
-  "sessions": {},
+  "sessions": {
+    "5002402843": {
+      "state": "payment_pending",
+      "account_type": "76",
+      "price": 0.01,
+      "available_count": 5,
+      "started_at": 1781004046962,
+      "quantity": 1,
+      "total_price": 0.01,
+      "reserved_accounts": [
+        {
+          "code": "t1wehebikidog2@maximail.fyi"
+        }
+      ],
+      "transaction_id": "a062046df3d5db22cf2f70db2cfd647a",
+      "md5": "a062046df3d5db22cf2f70db2cfd647a",
+      "qr_sent_at": 1781004054295,
+      "photo_message_id": 161,
+      "qr_message_id": 161
+    }
+  },
   "settings": {},
   "users": {},
   "purchases": []

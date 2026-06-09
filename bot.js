@@ -401,7 +401,7 @@ bot.on("callback_query", async ctx => {
     const typeCbId = typeCallbackId(at);
     const qtyBtns  = Array.from({ length: Math.min(pool.length, 25) }, (_, i) => Markup.button.callback(String(i + 1), `qty:${typeCbId}:${i + 1}`));
     const rows = [];
-    for (let i = 0; i < qtyBtns.length; i += 5) rows.push(qtyBtns.slice(i, i + 5));
+    for (let i = 0; i < qtyBtns.length; i += 4) rows.push(qtyBtns.slice(i, i + 4));
     rows.push([Markup.button.callback("🚫 បោះបង់", "cancel_buy")]);
     const msgId = ctx.callbackQuery.message.message_id;
     try {
