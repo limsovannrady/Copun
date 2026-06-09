@@ -591,7 +591,9 @@ bot.on("text", async ctx => {
       if (existingPrice != null && Math.round(existingPrice * 10000) !== Math.round(price * 10000)) {
         return sendMsg(ctx, chatId, `❌ <b>មិនអាចបញ្ចូលបាន!</b>\n\nប្រភេទ <code>${esc(accountType)}</code> មានតម្លៃ <b>${existingPrice}$</b> ស្រាប់។\nតម្លៃ <b>${price}$</b> មិនដូចគ្នា។ សូមប្រើ <b>${existingPrice}$</b>`, ADD_ACCOUNT_KB);
       }
-      const allExisting = new Set(Object.values(accounts_data.account_types).flat().map(a => (a.code || a.email || a.phone || "").toLowerCase()).filter(Boolean));
+      const poolKeys      = Object.values(accounts_data.account_types).flat().map(a => (a.code || a.email || a.phone || "").toLowerCase()).filter(Boolean);
+      const deliveredKeys = purchases.flatMap(p => (p.accounts || []).map(a => (a.code || a.email || a.phone || "").toLowerCase())).filter(Boolean);
+      const allExisting   = new Set([...poolKeys, ...deliveredKeys]);
       const toAdd  = accsToAdd.filter(a => !allExisting.has((a.code || a.email || a.phone || "").toLowerCase()));
       const dupes  = accsToAdd.length - toAdd.length;
       if (!accounts_data.account_types[accountType]) accounts_data.account_types[accountType] = [];
