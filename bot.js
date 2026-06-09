@@ -290,7 +290,6 @@ async function runPaymentWatchdog() {
       }
       delete user_sessions[userId]; saveSessions();
       deleteMsg(fakeCtx, userId, sess.photo_message_id).catch(() => {});
-      await sendMsg(fakeCtx, userId, "⌛ <b>QR Code បានផុតកំណត់</b>\n\nសូមបង្កើតការទិញម្ដងទៀត។").catch(() => {});
       await showAccountSelection(fakeCtx, userId).catch(() => {});
       continue;
     }
