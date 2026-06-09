@@ -23,8 +23,7 @@
   "sessions": {},
   "settings": {
     "WEBHOOK_SECRET": "24a95bb55213eef59e2a110fdbdd7515",
-    "TG_WEBHOOK_SECRET": "0efdee793428c00558f756cd04e10210914ebfe0",
-    "CAMBO_API_TOKEN": "5002402843:lObaoQGGOXdmlkFTuh4yyKrIzaAvUGQ4nmL"
+    "TG_WEBHOOK_SECRET": "0efdee793428c00558f756cd04e10210914ebfe0"
   },
   "users": {
     "7433145236": {
