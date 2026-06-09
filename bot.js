@@ -68,7 +68,7 @@ const BTN_DELETE_CONFIRM    = "✅ បញ្ជាក់លុប";
 const BTN_DELETE_CANCEL     = "🚫 បោះបង់ការលុប";
 const BTN_BROADCAST_CONFIRM = "✅ បញ្ជាក់ផ្សាយ";
 const BTN_BROADCAST_CANCEL  = "🚫 បោះបង់ការផ្សាយ";
-const ADMIN_SETTINGS_BTN    = "⚙️កំណត់";
+const ADMIN_SETTINGS_BTN    = "/settings";
 
 const ADMIN_BUTTON_LABELS = new Set([
   BTN_ADD_ACCOUNT, BTN_DELETE_TYPE, BTN_STOCK, BTN_USERS, BTN_BUYERS,
@@ -355,6 +355,15 @@ async function deliverAccounts(ctx, chatId, userId, session, paymentData = null)
 }
 
 const bot = new Telegraf(BOT_TOKEN);
+
+bot.command("settings", async ctx => {
+  const uid    = ctx.from.id;
+  const chatId = ctx.chat.id;
+  if (!isAdmin(uid)) return;
+  const sess = user_sessions[uid] ?? {};
+  if (String(sess.state || "").startsWith("admin_input:")) delete user_sessions[uid];
+  saveSessions(); return sendAdminSettingsMenu(ctx, chatId);
+});
 
 bot.command("start", async ctx => {
   const uid    = ctx.from.id;
